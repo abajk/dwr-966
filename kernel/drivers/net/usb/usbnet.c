@@ -49,33 +49,6 @@
 
 #define DRIVER_VERSION		"22-Aug-2005"
 
-#include <net/ppa_api.h>
-#include <net/ppa_hook.h>
-#include <net/ppa_api_directpath.h>
-uint32_t ppa_ifid = -1;
-
-unsigned int usbnet_ppa_enable;
-module_param(usbnet_ppa_enable, uint,  S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(usbnet_ppa_enable, "USBNET PPA ENABLE");
-
-static int32_t ppa_fp_rx(struct net_device *rxif, struct net_device *txif,
-					struct sk_buff *skb, int32_t len)
-{
-	if (rxif) {
-		if (netif_running(rxif)) {
-			skb->dev = rxif;
-			skb->protocol = eth_type_trans(skb, rxif);
-			netif_rx(skb);
-			return 0;
-		}
-	} else if (txif) {
-		skb->dev = txif;
-		dev_queue_xmit(skb);
-		return 0;
-	}
-	dev_kfree_skb_any(skb);
-	return 0;
-}
 
 /*-------------------------------------------------------------------------*/
 
@@ -356,9 +329,7 @@ void usbnet_skb_return (struct usbnet *dev, struct sk_buff *skb)
 		return;
 	}
 
-	if (!skb->protocol)
-		skb->protocol = eth_type_trans(skb, dev->net);
-
+	skb->protocol = eth_type_trans (skb, dev->net);
 	dev->net->stats.rx_packets++;
 	dev->net->stats.rx_bytes += skb->len;
 
@@ -368,13 +339,6 @@ void usbnet_skb_return (struct usbnet *dev, struct sk_buff *skb)
 
 	if (skb_defer_rx_timestamp(skb))
 		return;
-
-	if (dev->data[5] > 0) {
-		skb_push(skb, ETH_HLEN);
-		skb_reset_mac_header(skb);
-		ppa_hook_directpath_send_fn(ppa_ifid, skb, skb->len, 0);
-		return;
-	}
 
 	status = netif_rx (skb);
 	if (status != NET_RX_SUCCESS)
@@ -1453,13 +1417,6 @@ void usbnet_disconnect (struct usb_interface *intf)
 	if (!dev)
 		return;
 
-	if (usbnet_ppa_enable && (ppa_ifid >= 0)) {
-		ppa_hook_directpath_register_dev_fn(&ppa_ifid,
-						    dev->net, NULL, 0);
-		ppa_ifid = -1;
-	}
-
-
 	xdev = interface_to_usbdev (intf);
 
 	netif_info(dev, probe, dev->net, "unregister '%s' usb-%s-%s, %s\n",
@@ -1503,7 +1460,7 @@ static struct device_type wlan_type = {
 };
 
 static struct device_type wwan_type = {
-	.name	= "usb",
+	.name	= "wwan",
 };
 
 int
@@ -1604,9 +1561,9 @@ usbnet_probe (struct usb_interface *udev, const struct usb_device_id *prod)
 		/* WLAN devices should always be named "wlan%d" */
 		if ((dev->driver_info->flags & FLAG_WLAN) != 0)
 			strcpy(net->name, "wlan%d");
-		/* WWAN devices should always be named "usb%d" */
+		/* WWAN devices should always be named "wwan%d" */
 		if ((dev->driver_info->flags & FLAG_WWAN) != 0)
-			strcpy(net->name, "usb%d");
+			strcpy(net->name, "wwan%d");
 
 		/* devices that cannot do ARP */
 		if ((dev->driver_info->flags & FLAG_NOARP) != 0)
@@ -1654,20 +1611,6 @@ usbnet_probe (struct usb_interface *udev, const struct usb_device_id *prod)
 
 	// ok, it's ready to go.
 	usb_set_intfdata (udev, dev);
-
-	if (usbnet_ppa_enable && (ppa_ifid == -1)) {
-		uint32_t status;
-		PPA_DIRECTPATH_CB usbnet_ppafp_cb;
-
-		usbnet_ppafp_cb.stop_tx_fn = NULL;
-		usbnet_ppafp_cb.start_tx_fn = NULL;
-		usbnet_ppafp_cb.rx_fn = ppa_fp_rx;
-		status = ppa_hook_directpath_register_dev_fn(&ppa_ifid, net,
-			&usbnet_ppafp_cb, PPA_F_DIRECTPATH_REGISTER |
-			PPA_F_DIRECTPATH_ETH_IF | PPA_F_DIRECTPATH_WAN);
-		dev->data[5] = 1;
-	}
-
 
 	netif_device_attach (net);
 

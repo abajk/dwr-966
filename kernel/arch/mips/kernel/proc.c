@@ -7,7 +7,6 @@
 #include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/seq_file.h>
-#include <linux/cpufreq.h>
 #include <asm/bootinfo.h>
 #include <asm/cpu.h>
 #include <asm/cpu-features.h>
@@ -15,10 +14,6 @@
 #include <asm/mipsregs.h>
 #include <asm/processor.h>
 #include <asm/prom.h>
-
-#include <asm/uaccess.h>
-#include <linux/proc_fs.h>
-
 
 unsigned int vced_count, vcei_count;
 
@@ -29,7 +24,6 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 	unsigned int fp_vers = cpu_data[n].fpu_id;
 	char fmt [64];
 	int i;
-
 
 #ifdef CONFIG_SMP
 	if (!cpu_online(n))
@@ -45,22 +39,13 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 			seq_printf(m, "machine\t\t\t: %s\n",
 				   mips_get_machine_name());
 	}
+
 	seq_printf(m, "processor\t\t: %ld\n", n);
 	sprintf(fmt, "cpu model\t\t: %%s V%%d.%%d%s\n",
 		      cpu_data[n].options & MIPS_CPU_FPU ? "  FPU V%d.%d" : "");
 	seq_printf(m, fmt, __cpu_name[n],
 		      (version >> 4) & 0x0f, version & 0x0f,
 		      (fp_vers >> 4) & 0x0f, fp_vers & 0x0f);
-	#ifdef CONFIG_CPU_FREQ
-	{
-		unsigned int freq = cpufreq_quick_get(n);
-
-		if (freq > 0){
-			seq_printf(m, "cpu MHz\t\t\t: %u.%03u\n",
-				   freq / 1000, (freq % 1000));
-		}
-	}
-	#endif
 	seq_printf(m, "BogoMIPS\t\t: %u.%02u\n",
 		      cpu_data[n].udelay_val / (500000/HZ),
 		      (cpu_data[n].udelay_val / (5000/HZ)) % 100);
@@ -113,7 +98,6 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 	if (cpu_has_mipsmt)	seq_printf(m, "%s", " mt");
 	if (cpu_has_mmips)	seq_printf(m, "%s", " micromips");
 	if (cpu_has_vz)		seq_printf(m, "%s", " vz");
-	if (cpu_has_eva)	seq_printf(m, "%s", " eva");
 	seq_printf(m, "\n");
 
 	if (cpu_has_mmips) {
@@ -125,23 +109,12 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 	seq_printf(m, "kscratch registers\t: %d\n",
 		      hweight8(cpu_data[n].kscratch_mask));
 	seq_printf(m, "core\t\t\t: %d\n", cpu_data[n].core);
-#if defined(CONFIG_MIPS_MT_SMP) || defined(CONFIG_MIPS_MT_SMTC)
-	if (cpu_has_mipsmt) {
-		seq_printf(m, "VPE\t\t\t: %d\n", cpu_data[n].vpe_id);
-#if defined(CONFIG_MIPS_MT_SMTC)
-		seq_printf(m, "TC\t\t\t: %d\n", cpu_data[n].tc_id);
-#endif
-	}
-#endif
 
 	sprintf(fmt, "VCE%%c exceptions\t\t: %s\n",
 		      cpu_has_vce ? "%u" : "not available");
 	seq_printf(m, fmt, 'D', vced_count);
 	seq_printf(m, fmt, 'I', vcei_count);
 	seq_printf(m, "\n");
-#ifdef CONFIG_PROC_LTQ_DEBUG
-	seq_printf(m,"segment control registers 0:%.8x 1:%.8x 2:%.8x\n",read_c0_segctl0(),read_c0_segctl1(),read_c0_segctl2());
-#endif
 
 	return 0;
 }
@@ -169,20 +142,3 @@ const struct seq_operations cpuinfo_op = {
 	.stop	= c_stop,
 	.show	= show_cpuinfo,
 };
-
-
-/*
-* Support for MIPS/local /proc hooks in /proc/mips/
-*/
-
-static struct proc_dir_entry *mips_proc = NULL;
-
-struct proc_dir_entry *get_mips_proc_dir(void)
-{
-	/*
-	* This ought not to be preemptable.
-	*/
-	if(mips_proc == NULL)
-		mips_proc = proc_mkdir("mips", NULL);
-	return(mips_proc);
-}

@@ -45,16 +45,10 @@
  */
 
 /* driver specific data */
-#define br_port_exists(dev) (dev->priv_flags & IFF_BRIDGE_PORT)
-struct br_state {
-	int first_open;
-	uint8_t peer_addr[ETH_ALEN];
-};
-
 struct qmi_wwan_state {
 	struct usb_driver *subdriver;
 	atomic_t pmcount;
-	struct br_state *br;
+	unsigned long unused;
 	struct usb_interface *control;
 	struct usb_interface *data;
 };
@@ -62,19 +56,6 @@ struct qmi_wwan_state {
 /* default ethernet address used by the modem */
 static const u8 default_modem_addr[ETH_ALEN] = {0x02, 0x50, 0xf3};
 
-static struct sk_buff *qmi_wwan_tx_fixup(struct usbnet *dev,
-					 struct sk_buff *skb, gfp_t flags)
-{
-	struct qmi_wwan_state *info = (void *)&dev->data;
-
-	if (info->br->first_open && br_port_exists(dev->net)) {
-		memcpy(info->br->peer_addr, eth_hdr(skb)->h_source, ETH_ALEN);
-		info->br->first_open = 0;
-	}
-
-	skb_pull(skb, ETH_HLEN);
-	return skb;
-}
 /* Make up an ethernet header if the packet doesn't have one.
  *
  * A firmware bug common among several devices cause them to send raw
@@ -98,9 +79,11 @@ static struct sk_buff *qmi_wwan_tx_fixup(struct usbnet *dev,
 static int qmi_wwan_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
 {
 	__be16 proto;
-	struct ethhdr *eth;
-	struct qmi_wwan_state *info = (void *)&dev->data;
 
+	/* usbnet rx_complete guarantees that skb->len is at least
+	 * hard_header_len, so we can inspect the dest address without
+	 * checking skb->len
+	 */
 	switch (skb->data[0] & 0xf0) {
 	case 0x40:
 		proto = htons(ETH_P_IP);
@@ -108,17 +91,24 @@ static int qmi_wwan_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
 	case 0x60:
 		proto = htons(ETH_P_IPV6);
 		break;
+	case 0x00:
+		if (is_multicast_ether_addr(skb->data))
+			return 1;
+		/* possibly bogus destination - rewrite just in case */
+		skb_reset_mac_header(skb);
+		goto fix_dest;
 	default:
-		return 0;
+		/* pass along other packets without modifications */
+		return 1;
 	}
-
-	eth = skb_push(skb, ETH_HLEN);
-	eth->h_proto = proto;
-	memcpy(eth->h_source, default_modem_addr, ETH_ALEN);
-	if (br_port_exists(dev->net))
-		memcpy(eth->h_dest, info->br->peer_addr, ETH_ALEN);
-	else
-		memcpy(eth->h_dest, skb->dev->dev_addr, ETH_ALEN);
+	if (skb_headroom(skb) < ETH_HLEN)
+		return 0;
+	skb_push(skb, ETH_HLEN);
+	skb_reset_mac_header(skb);
+	eth_hdr(skb)->h_proto = proto;
+	memset(eth_hdr(skb)->h_source, 0, ETH_ALEN);
+fix_dest:
+	memcpy(eth_hdr(skb)->h_dest, dev->net->dev_addr, ETH_ALEN);
 	return 1;
 }
 
@@ -143,18 +133,9 @@ static int qmi_wwan_mac_addr(struct net_device *dev, void *p)
 	return 0;
 }
 
-static int qmi_wwan_stop (struct net_device *net)
-{
-	struct usbnet *dev = netdev_priv(net);
-	struct qmi_wwan_state *info = (void *)&dev->data;
-
-	info->br->first_open = 1;
-	return usbnet_stop(net);
-}
-
 static const struct net_device_ops qmi_wwan_netdev_ops = {
 	.ndo_open		= usbnet_open,
-	.ndo_stop		= qmi_wwan_stop,
+	.ndo_stop		= usbnet_stop,
 	.ndo_start_xmit		= usbnet_start_xmit,
 	.ndo_tx_timeout		= usbnet_tx_timeout,
 	.ndo_change_mtu		= usbnet_change_mtu,
@@ -333,16 +314,10 @@ next_desc:
 			goto err;
 	}
 
-	info->br = kmalloc(sizeof(struct br_state), GFP_KERNEL);
-	info->br->first_open = 1;
-
 	status = qmi_wwan_register_subdriver(dev);
 	if (status < 0 && info->control != info->data) {
 		usb_set_intfdata(info->data, NULL);
 		usb_driver_release_interface(driver, info->data);
-		kfree(info->br);
-		info->br = NULL;
-
 	}
 
 	/* Never use the same address on both ends of the link, even
@@ -357,14 +332,6 @@ next_desc:
 		dev->net->dev_addr[0] &= 0xbf;	/* clear "IP" bit */
 	}
 	dev->net->netdev_ops = &qmi_wwan_netdev_ops;
-	dev->net->flags |= IFF_NOARP;
-	dev->net->priv_flags |= IFF_NO_IP_ALIGN;
-	usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, 0),
-		USB_CDC_REQ_SET_CONTROL_LINE_STATE,
-		(USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE),
-		1, intf->cur_altsetting->desc.bInterfaceNumber,
-		NULL, 0, USB_CTRL_SET_TIMEOUT);
-
 err:
 	return status;
 }
@@ -393,9 +360,6 @@ static void qmi_wwan_unbind(struct usbnet *dev, struct usb_interface *intf)
 	info->subdriver = NULL;
 	info->data = NULL;
 	info->control = NULL;
-
-	kfree(info->br);
-	info->br = NULL;
 }
 
 /* suspend/resume wrappers calling both usbnet and the cdc-wdm
@@ -452,7 +416,6 @@ static const struct driver_info	qmi_wwan_info = {
 	.unbind		= qmi_wwan_unbind,
 	.manage_power	= qmi_wwan_manage_power,
 	.rx_fixup       = qmi_wwan_rx_fixup,
-	.tx_fixup	= qmi_wwan_tx_fixup,
 };
 
 #define HUAWEI_VENDOR_ID	0x12D1
@@ -471,8 +434,6 @@ static const struct driver_info	qmi_wwan_info = {
 	QMI_FIXED_INTF(vend, prod, 0)
 
 static const struct usb_device_id products[] = {
-	{QMI_FIXED_INTF(0x05c6, 0x9025, 4)},    /* WNC OL1990 */
-	{QMI_FIXED_INTF(0x1435, 0xd191, 4)},    /* WNC D19 */
 	/* 1. CDC ECM like devices match on the control interface */
 	{	/* Huawei E392, E398 and possibly others sharing both device id and more... */
 		USB_VENDOR_AND_INTERFACE_INFO(HUAWEI_VENDOR_ID, USB_CLASS_VENDOR_SPEC, 1, 9),

@@ -1,5 +1,0 @@
-
-#ifndef LTQUSB_VERSION
-#define LTQUSB_VERSION "4.0 B140513"
-#endif
-

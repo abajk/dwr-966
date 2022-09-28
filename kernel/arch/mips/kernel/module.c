@@ -42,11 +42,6 @@ struct mips_hi16 {
 static LIST_HEAD(dbe_list);
 static DEFINE_SPINLOCK(dbe_lock);
 
-#ifdef CONFIG_STATIC_WLAN_MEMORY
-extern unsigned int wlan_flag;
-extern void *wlan_pgaddr;
-#endif
-
 /*
  * Get the potential max trampolines size required of the init and
  * non-init sections. Only used if we cannot find enough contiguous
@@ -128,12 +123,6 @@ static void *alloc_phys(unsigned long size)
 	struct page *page;
 	struct page *p;
 
-#ifdef CONFIG_STATIC_WLAN_MEMORY
-	if (wlan_flag == 1) {
-		wlan_flag = 0;
-		return wlan_pgaddr;
-	}
-#endif
 	size = PAGE_ALIGN(size);
 	order = get_order(size);
 
@@ -203,16 +192,8 @@ void module_free(struct module *mod, void *module_region)
 	if (is_phys_addr(module_region)) {
 		if (mod->module_init == module_region)
 			free_phys(module_region, mod->init_size);
-#ifdef CONFIG_STATIC_WLAN_MEMORY
-		else if (mod->module_core == module_region) {
-			if (strcmp(mod->name, "mtlk")){
-				free_phys(module_region, mod->core_size);
-			}
-		}
-#else
-		else if (mod->module_core == module_region) 
-				free_phys(module_region, mod->core_size);
-#endif
+		else if (mod->module_core == module_region)
+			free_phys(module_region, mod->core_size);
 		else
 			BUG();
 	} else {

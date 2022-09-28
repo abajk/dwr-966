@@ -41,93 +41,6 @@ static int __init maxtcs(char *str)
 
 __setup("maxtcs=", maxtcs);
 
-#ifdef CONFIG_LTQ_VPE_EXT
-int stlb;
-
-static int __init istlbshared(char *str)
-{
-       get_option(&str, &stlb);
-
-       return 1;
-}
-
-__setup("vpe_tlb_shared=", istlbshared);
-
-int vpe0_wired;
-
-static int __init vpe0wired(char *str)
-{
-       get_option(&str, &vpe0_wired);
-
-       return 1;
-}
-
-__setup("vpe0_wired_tlb_entries=", vpe0wired);
-
-int vpe1_wired;
-
-static int __init vpe1wired(char *str)
-{
-       get_option(&str, &vpe1_wired);
-
-       return 1;
-}
-
-__setup("vpe1_wired_tlb_entries=", vpe1wired);
-
-#ifdef CONFIG_MIPS_MT_SMTC
-extern int nostlb;
-#endif
-void configure_tlb(void)
-{
-               int vpeflags, tcflags, tlbsiz;
-        unsigned int config1val;
-       vpeflags = dvpe();
-       tcflags = dmt();
-       write_c0_vpeconf0((read_c0_vpeconf0() | VPECONF0_MVP));
-       write_c0_mvpcontrol((read_c0_mvpcontrol() | MVPCONTROL_VPC));
-       mips_ihb();
-       //printk("stlb = %d, vpe0_wired = %d vpe1_wired=%d\n", stlb,vpe0_wired, vpe1_wired);
-       if (stlb) {
-                if (!(read_c0_mvpconf0() & MVPCONF0_TLBS)) {
-                       emt(tcflags);
-                        evpe(vpeflags);
-                        return;
-                }
-
-               write_c0_mvpcontrol(read_c0_mvpcontrol() | MVPCONTROL_STLB);
-               write_c0_wired(vpe0_wired + vpe1_wired);
-                if (((read_vpe_c0_config() & MIPS_CONF_MT) >> 7) == 1) {
-                        config1val = read_vpe_c0_config1();
-                        tlbsiz = (((config1val >> 25) & 0x3f) + 1);
-                        if (tlbsiz > 64)
-                                tlbsiz = 64;
-                        cpu_data[0].tlbsize = tlbsiz;
-			current_cpu_data.tlbsize = tlbsiz;
-                }
-
-       }
-       else {
-               write_c0_mvpcontrol(read_c0_mvpcontrol() & ~MVPCONTROL_STLB);
-               write_c0_wired(vpe0_wired);
-       }
-
-       ehb();
-       write_c0_mvpcontrol((read_c0_mvpcontrol() & ~MVPCONTROL_VPC));
-       ehb();
-        local_flush_tlb_all();
-
-       printk("Wired TLB entries for Linux read_c0_wired() = %d\n", read_c0_wired());
-#ifdef CONFIG_MIPS_MT_SMTC
-       nostlb = !stlb;
-#endif
-       emt(tcflags);
-       evpe(vpeflags);
-}
-
-#endif
-
-
 /*
  * Dump new MIPS MT state for the core. Does not leave TCs halted.
  * Takes an argument which taken to be a pre-call MVPControl value.
@@ -373,9 +286,6 @@ void mips_mt_set_cpuoptions(void)
 		printk("Mapped %ld ITC cells starting at 0x%08x\n",
 			((itcblkgrn & 0x7fe00000) >> 20), itc_base);
 	}
-#ifdef CONFIG_LTQ_VPE_EXT
-        configure_tlb();
-#endif
 }
 
 /*

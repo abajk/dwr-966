@@ -293,18 +293,6 @@ enum macvlan_mode {
 
 #define MACVLAN_FLAG_NOPROMISC	1
 
-#if defined(CONFIG_LTQ_ETHSW) || defined(CONFIG_LTQ_ETHSW_MODULE)
-/* lantiq_ethsw section */
-enum
-{
-	IFLA_ETHSW_UNSPEC,
-	IFLA_ETHSW_PORTS,
-	__IFLA_ETHSW_MAX,
-};
-
-#define IFLA_ETHSW_MAX (__IFLA_ETHSW_MAX - 1) 
-#endif
-
 /* VXLAN section */
 enum {
 	IFLA_VXLAN_UNSPEC,

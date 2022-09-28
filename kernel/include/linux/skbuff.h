@@ -33,21 +33,6 @@
 #include <linux/dma-mapping.h>
 #include <linux/netdev_features.h>
 #include <net/flow_keys.h>
-#if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
-#include <linux/imq.h>
-#endif
-
-#ifdef CONFIG_NETWORK_EXTMARK
-#include <linux/extmark.h>
-#endif
-
-/* reccommended as it's faster*/
-#define GET_DATA_FROM_MARK_OPT(mark, mask, pos, value) value = ((mark & mask) >> pos)
-#define SET_DATA_FROM_MARK_OPT(mark, mask, pos, value) mark &= ~mask; mark |= ((value << pos) & mask)
-
-#define MASK(pos, len) (((1<<len)-1)<<pos)
-#define GET_DATA_FROM_MARK(mark, pos, len, value) GET_DATA_FROM_MARK_OPT(mark, MASK(pos, len), pos, value)
-#define SET_DATA_FROM_MARK(mark, pos, len, value) SET_DATA_FROM_MARK_OPT(mark, MASK(pos, len), pos, value)
 
 /* Don't change this without changing skb_csum_unnecessary! */
 #define CHECKSUM_NONE 0
@@ -63,10 +48,6 @@
 	SKB_WITH_OVERHEAD((PAGE_SIZE << (ORDER)) - (X))
 #define SKB_MAX_HEAD(X)		(SKB_MAX_ORDER((X), 0))
 #define SKB_MAX_ALLOC		(SKB_MAX_ORDER(0, 2))
-
-#ifdef CONFIG_LANTIQ_IPQOS_MARK_SKBPRIO
-
-#endif
 
 /* return minimum truesize of one skb containing X bytes of data */
 #define SKB_TRUESIZE(X) ((X) +						\
@@ -439,9 +420,6 @@ struct sk_buff {
 	 * first. This is owned by whoever has the skb queued ATM.
 	 */
 	char			cb[48] __aligned(8);
-#if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
-	void			*cb_next;
-#endif
 
 	unsigned long		_skb_refdst;
 #ifdef CONFIG_XFRM
@@ -479,9 +457,6 @@ struct sk_buff {
 #endif
 #ifdef NET_SKBUFF_NF_DEFRAG_NEEDED
 	struct sk_buff		*nfct_reasm;
-#endif
-#if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
-	struct nf_queue_entry	*nf_queue_entry;
 #endif
 #ifdef CONFIG_BRIDGE_NETFILTER
 	struct nf_bridge_info	*nf_bridge;
@@ -522,18 +497,11 @@ struct sk_buff {
 	/* 7/9 bit hole (depending on ndisc_nodetype presence) */
 	kmemcheck_bitfield_end(flags2);
 
-#if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
-	__u8			imq_flags:IMQ_F_BITS;
-#endif
-
 #ifdef CONFIG_NET_DMA
 	dma_cookie_t		dma_cookie;
 #endif
 #ifdef CONFIG_NETWORK_SECMARK
 	__u32			secmark;
-#endif
-#ifdef CONFIG_NETWORK_EXTMARK
-	__u32			extmark;
 #endif
 	union {
 		__u32		mark;
@@ -657,12 +625,6 @@ static inline struct rtable *skb_rtable(const struct sk_buff *skb)
 {
 	return (struct rtable *)skb_dst(skb);
 }
-
-
-#if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
-extern int skb_save_cb(struct sk_buff *skb);
-extern int skb_restore_cb(struct sk_buff *skb);
-#endif
 
 extern void kfree_skb(struct sk_buff *skb);
 extern void kfree_skb_list(struct sk_buff *segs);
@@ -2537,12 +2499,6 @@ extern int	       skb_shift(struct sk_buff *tgt, struct sk_buff *skb,
 extern struct sk_buff *skb_segment(struct sk_buff *skb,
 				   netdev_features_t features);
 
-#ifdef CONFIG_LANTIQ_IPQOS_MARK_SKBPRIO
-
-extern int skb_mark_priority(struct sk_buff *skb);
-
-#endif
-
 static inline void *skb_header_pointer(const struct sk_buff *skb, int offset,
 				       int len, void *buffer)
 {
@@ -2809,10 +2765,6 @@ static inline void __nf_copy(struct sk_buff *dst, const struct sk_buff *src)
 #ifdef NET_SKBUFF_NF_DEFRAG_NEEDED
 	dst->nfct_reasm = src->nfct_reasm;
 	nf_conntrack_get_reasm(src->nfct_reasm);
-#endif
-#if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
-	dst->imq_flags = src->imq_flags;
-	dst->nf_queue_entry = src->nf_queue_entry;
 #endif
 #ifdef CONFIG_BRIDGE_NETFILTER
 	dst->nf_bridge  = src->nf_bridge;

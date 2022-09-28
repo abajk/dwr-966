@@ -4,7 +4,6 @@
  *  by the Free Software Foundation.
  *
  *  Copyright (C) 2010 John Crispin <blogic@openwrt.org>
- *  Copyright (C) 2013 Lei Chuanhua <Chuanhua.lei@lantiq.com>
  */
 
 #ifndef _LTQ_XWAY_H__
@@ -36,17 +35,6 @@
 #define SOC_ID_VRX268_2		0x00C /* v1.2 */
 #define SOC_ID_GRX288_2		0x00D /* v1.2 */
 #define SOC_ID_GRX282_2		0x00E /* v1.2 */
-#define SOC_ID_VRX220		0x000
-
-#define SOC_ID_ARX362		0x004
-#define SOC_ID_ARX368		0x005
-#define SOC_ID_ARX382		0x007
-#define SOC_ID_ARX388		0x008
-#define SOC_ID_URX388		0x009
-#define SOC_ID_GRX383		0x010
-#define SOC_ID_GRX369		0x011
-#define SOC_ID_GRX387		0x00F
-#define SOC_ID_GRX389		0x012
 
  /* SoC Types */
 #define SOC_TYPE_DANUBE		0x01
@@ -55,43 +43,6 @@
 #define SOC_TYPE_VR9		0x04 /* v1.1 */
 #define SOC_TYPE_VR9_2		0x05 /* v1.2 */
 #define SOC_TYPE_AMAZON_SE	0x06
-#define SOC_TYPE_AR10		0x07
-#define SOC_TYPE_GRX390		0x08
-#define SOC_TYPE_VRX220		0x09
-
-static inline int ltq_is_ase(void)
-{
-	return (ltq_get_soc_type() == SOC_TYPE_AMAZON_SE);
-}
-
-static inline int ltq_is_danube(void)
-{
-	return (ltq_get_soc_type() == SOC_TYPE_DANUBE);
-}
-
-static inline int ltq_is_ar9(void)
-{
-	return (ltq_get_soc_type() == SOC_TYPE_AR9);
-}
-
-static inline int ltq_is_vr9(void)
-{
-	int type = ltq_get_soc_type();
-	if ((type == SOC_TYPE_VR9) || (type == SOC_TYPE_VR9_2))
-		return 1;
-	else
-		return 0;
-}
-
-static inline int ltq_is_ar10(void)
-{
-	return (ltq_get_soc_type() == SOC_TYPE_AR10);
-}
-
-static inline int ltq_is_grx390(void)
-{
-	return (ltq_get_soc_type() == SOC_TYPE_GRX390);
-}
 
 /* BOOT_SEL - find what boot media we have */
 #define BS_EXT_ROM		0x0
@@ -107,11 +58,6 @@ static inline int ltq_is_grx390(void)
 #define ltq_cgu_w32(x, y)	ltq_w32((x), ltq_cgu_membase + (y))
 #define ltq_cgu_r32(x)		ltq_r32(ltq_cgu_membase + (x))
 extern __iomem void *ltq_cgu_membase;
-
-/* helpers used to access the rcu */
-void ltq_rcu_w32(uint32_t val, uint32_t reg_off);
-uint32_t ltq_rcu_r32(uint32_t reg_off);
-void ltq_rcu_w32_mask(uint32_t clr, uint32_t set, uint32_t reg_off);
 
 /*
  * during early_printk no ioremap is possible
@@ -135,19 +81,14 @@ void ltq_rcu_w32_mask(uint32_t clr, uint32_t set, uint32_t reg_off);
 /* MPS - multi processor unit (voice) */
 #define LTQ_MPS_BASE_ADDR	(KSEG1 + 0x1F107000)
 #define LTQ_MPS_CHIPID		((u32 *)(LTQ_MPS_BASE_ADDR + 0x0344))
-#define LTQ_FUSE_ID_CFG 	((u32 *)(LTQ_MPS_BASE_ADDR + 0x0350))
 
 /* allow booting xrx200 phys */
 int xrx200_gphy_boot(struct device *dev, unsigned int id, dma_addr_t dev_addr);
 
 /* request a non-gpio and set the PIO config */
 #define PMU_PPE			 BIT(13)
-
-/* allow the ethernet driver to load a flash mapped mac addr */
-const u8* ltq_get_eth_mac(void);
-
-int ltq_reset_get_status (void);
-int ltq_ts_get_temp(int *p_temp);
+extern void ltq_pmu_enable(unsigned int module);
+extern void ltq_pmu_disable(unsigned int module);
 
 #endif /* CONFIG_SOC_TYPE_XWAY */
 #endif /* _LTQ_XWAY_H__ */

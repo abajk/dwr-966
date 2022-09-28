@@ -814,9 +814,6 @@ else
       endif
     endif
   endif
-  ifeq ($(ARCH),mips)
-    LIB_H += arch/mips/include/perf_regs.h
-  endif
 endif
 
 ifdef NO_DEMANGLE

@@ -59,7 +59,7 @@ static const struct ebt_table frame_filter =
 	.me		= THIS_MODULE,
 };
 
-static unsigned int __ebt_optimized 
+static unsigned int
 ebt_in_hook(unsigned int hook, struct sk_buff *skb, const struct net_device *in,
    const struct net_device *out, int (*okfn)(struct sk_buff *))
 {
@@ -74,7 +74,6 @@ ebt_out_hook(unsigned int hook, struct sk_buff *skb, const struct net_device *in
 }
 
 static struct nf_hook_ops ebt_ops_filter[] __read_mostly = {
-#ifdef CONFIG_LTQ_IPQOS_BRIDGE_EBT_T_FILTER_INPUT
 	{
 		.hook		= ebt_in_hook,
 		.owner		= THIS_MODULE,
@@ -82,7 +81,6 @@ static struct nf_hook_ops ebt_ops_filter[] __read_mostly = {
 		.hooknum	= NF_BR_LOCAL_IN,
 		.priority	= NF_BR_PRI_FILTER_BRIDGED,
 	},
-#endif
 	{
 		.hook		= ebt_in_hook,
 		.owner		= THIS_MODULE,
@@ -90,7 +88,6 @@ static struct nf_hook_ops ebt_ops_filter[] __read_mostly = {
 		.hooknum	= NF_BR_FORWARD,
 		.priority	= NF_BR_PRI_FILTER_BRIDGED,
 	},
-#ifdef CONFIG_LTQ_IPQOS_BRIDGE_EBT_T_FILTER_INPUT
 	{
 		.hook		= ebt_out_hook,
 		.owner		= THIS_MODULE,
@@ -98,7 +95,6 @@ static struct nf_hook_ops ebt_ops_filter[] __read_mostly = {
 		.hooknum	= NF_BR_LOCAL_OUT,
 		.priority	= NF_BR_PRI_FILTER_OTHER,
 	},
-#endif
 };
 
 static int __net_init frame_filter_net_init(struct net *net)

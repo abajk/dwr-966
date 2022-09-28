@@ -16,8 +16,6 @@
 #include <linux/ip.h>
 #include <linux/udp.h>
 #include <linux/icmp.h>
-#include <linux/inetdevice.h>
-#include <linux/netdevice.h>
 #include <net/icmp.h>
 #include <net/ip.h>
 #include <net/tcp.h>
@@ -133,144 +131,6 @@ static inline void send_unreach(struct sk_buff *skb_in, int code)
 	icmp_send(skb_in, ICMP_DEST_UNREACH, code, 0);
 }
 
-
-// GARYeh 20131008: add http redirect with REJECT target
-#define NIPQUAD(addr) \
-        ((unsigned char *)&addr)[0], \
-        ((unsigned char *)&addr)[1], \
-        ((unsigned char *)&addr)[2], \
-        ((unsigned char *)&addr)[3]
-
-#define NIPQUAD_FMT		"%u.%u.%u.%u"
-
-#define LAN_INTERFACE	"br0"
-#define BLOCK_PAGE		"urlFilterBlocked.asp"
-#define REDIRECT_PAGE	"urlFilterLogin.asp"
-
-#define MAX_HTTP_REDIRECT_CONTENT 512
-static int send_http_redirect(struct sk_buff *oldskb, int hook, char *fun)
-{   
-	char http_content[MAX_HTTP_REDIRECT_CONTENT], *pHttp_content;   
-
-	// Get LAN interface IP
-	struct net_device *br0_dev; 
-	struct in_device *br0_in_dev;
-
-	// get interface
-	br0_dev = dev_get_by_name(&init_net, LAN_INTERFACE);
-	br0_in_dev = in_dev_get(br0_dev);
-
-	memset(http_content, 0, sizeof(http_content));
-	if(strcmp(fun,"block") == 0)
-	{
-		//printk("ipt_REJECT: IPT_WEB_BLOCK.\n");
-		sprintf(http_content,"HTTP/1.1 303\r\nContent-Type: text/html\r\nConnection: close\r\nLocation: http://"NIPQUAD_FMT"/"BLOCK_PAGE"\r\n", NIPQUAD(br0_in_dev->ifa_list->ifa_address));
-	}
-	else if(strcmp(fun,"redirect") == 0)
-	{	
-		//printk("ipt_REJECT: IPT_WEB_REDIRECT.\n");
-		sprintf(http_content,"HTTP/1.1 303\r\nContent-Type: text/html\r\nConnection: close\r\nLocation: http://"NIPQUAD_FMT"/"REDIRECT_PAGE"\r\n", NIPQUAD(br0_in_dev->ifa_list->ifa_address));	
-	}
-	// GARYeh 20131009:release interface after dev_get_by_name() & in_dev_get()
-	in_dev_put(br0_in_dev);
-	dev_put(br0_dev);
-
-	struct sk_buff *nskb;
-	const struct iphdr *oiph;
-	struct iphdr *niph;
-	const struct tcphdr *oth;
-	struct tcphdr _otcph, *tcph;
-	unsigned int otcplen;   /* IP header checks: fragment. */	
-	if (ip_hdr(oldskb)->frag_off & htons(IP_OFFSET)) 
-		return 0;  	
-	oth = skb_header_pointer(oldskb, ip_hdrlen(oldskb), sizeof(_otcph), &_otcph);
-	otcplen = oldskb->len - ip_hdr(oldskb)->ihl*4;
-	if (oth == NULL)
-		return 0;   /* No RST for RST. */
-	if (oth->rst)
-		return 0;   /* Check checksum */
-	if (skb_rtable(oldskb)->rt_flags & (RTCF_BROADCAST | RTCF_MULTICAST))
-		return 0;
-	if (nf_ip_checksum(oldskb, hook, ip_hdrlen(oldskb), IPPROTO_TCP))
-		return 0;
-	oiph = ip_hdr(oldskb);	   
-	unsigned char *http_data = (void *)oth + oth->doff*4;
-	/*debug message*/
-	   /*
-	   unsigned int datalen = (oldskb)->len - (oiph->ihl*4) - (oth->doff*4);  
-	   char show_data[20];
-	   memset(show_data, 0, sizeof(show_data));
-	   memcpy(show_data, http_data, sizeof(show_data) - 1);
-	   printk(KERN_EMERG "__[Kernel]datalen=%d http data=%sn", datalen,show_data);	 
-	   if (datalen < 10){
-		  return;
-	   }
-	   */	   
-	if(memcmp(http_data, "GET", sizeof("GET") - 1) != 0 && memcmp(http_data, "POST", sizeof("POST") - 1) != 0)
-		return 0;
-	nskb = alloc_skb(sizeof(struct iphdr) + sizeof(struct tcphdr) + LL_MAX_HEADER + strlen(http_content), GFP_ATOMIC);
-	if (!nskb)
-		return 0;  
-
-	skb_reserve(nskb, LL_MAX_HEADER);  
-
-	skb_reset_network_header(nskb);
-	niph = (struct iphdr *)skb_put(nskb, sizeof(struct iphdr));
-	niph->version	= 4;
-	niph->ihl	= sizeof(struct iphdr) / 4;
-	niph->tos	= 0;
-	niph->id	= 0;
-	niph->frag_off	= htons(IP_DF);
-	niph->protocol	= IPPROTO_TCP;
-	niph->check = 0;
-	niph->saddr = oiph->daddr;
-	niph->daddr = oiph->saddr;	
-	
-	skb_reset_transport_header(nskb);
-	tcph = (struct tcphdr *)skb_put(nskb, sizeof(struct tcphdr));
-	memset(tcph, 0, sizeof(*tcph));
-	tcph->source	= oth->dest;
-	tcph->dest	= oth->source;
-	tcph->doff	= sizeof(struct tcphdr) / 4;	
-	tcph->seq = oth->ack_seq;
-	tcph->ack_seq = htonl(ntohl(oth->seq) + oth->syn + oth->fin + otcplen - (oth->doff<<2));	
-	tcph->fin = 1;
-	tcph->psh = 1;
-	tcph->ack = 1;	
-	tcph->rst	= 0;   
-	
-	pHttp_content = (char *)skb_put(nskb, strlen(http_content));
-	strcpy(pHttp_content, http_content);  
-	nskb->csum = csum_partial((char *)tcph + tcph->doff*4, strlen(http_content), 0);
-	//tcph->check = ~tcp_v4_check(sizeof(struct tcphdr) + strlen(http_content), niph->saddr, niph->daddr, csum_partial(tcph, sizeof(struct tcphdr), nskb->csum));
-	tcph->check = tcp_v4_check(sizeof(struct tcphdr) + strlen(http_content), niph->saddr, niph->daddr, csum_partial(tcph, sizeof(struct tcphdr), nskb->csum));
-	
-	//nskb->ip_summed = CHECKSUM_PARTIAL;
-	//nskb->csum_start = (unsigned char *)tcph - nskb->head;
-	//nskb->csum_offset = offsetof(struct tcphdr, check);
-
-	/* ip_route_me_harder expects skb->dst to be set */
-	skb_dst_set_noref(nskb, skb_dst(oldskb));
-
-	nskb->protocol = htons(ETH_P_IP);
-	if (ip_route_me_harder(nskb, RTN_UNSPEC))
-		goto free_nskb;
-
-	niph->ttl	= ip4_dst_hoplimit(skb_dst(nskb));
-	nskb->ip_summed = CHECKSUM_NONE;
-	/* "Never happens" */
-	if (nskb->len > dst_mtu(skb_dst(nskb)))
-		goto free_nskb;
-
-	nf_ct_attach(nskb, oldskb);
-
-	ip_local_out(nskb);
-	return 1;
-
- free_nskb:
-	kfree_skb(nskb);
-}  
-
 static unsigned int
 reject_tg(struct sk_buff *skb, const struct xt_action_param *par)
 {
@@ -300,17 +160,6 @@ reject_tg(struct sk_buff *skb, const struct xt_action_param *par)
 		break;
 	case IPT_TCP_RESET:
 		send_reset(skb, par->hooknum);
-		break;
-	case IPT_WEB_BLOCK:
-		//printk("reject_tg: IPT_WEB_BLOCK %d.\n", reject->with);
-		if(!send_http_redirect(skb, par->hooknum,"block"))
-			return NF_ACCEPT;
-		break;
-	case	IPT_WEB_REDIRECT:
-		//printk("reject_tg: IPT_WEB_REDIRECT %d.\n", reject->with);
-		if(!send_http_redirect(skb, par->hooknum,"redirect"))
-			return NF_ACCEPT;
-		break;
 	case IPT_ICMP_ECHOREPLY:
 		/* Doesn't happen. */
 		break;

@@ -11,8 +11,6 @@ obj-y				:= malta-amon.o malta-display.o malta-init.o \
 
 obj-$(CONFIG_EARLY_PRINTK)	+= malta-console.o
 obj-$(CONFIG_PCI)		+= malta-pci.o
-obj-$(CONFIG_DTC)		+= malta-dt-setup.o
 
 # FIXME FIXME FIXME
 obj-$(CONFIG_MIPS_MT_SMTC)	+= malta-smtc.o
-obj-$(CONFIG_DTC)		+= dts/

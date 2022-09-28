@@ -33,15 +33,6 @@ MODULE_DESCRIPTION("ftp connection tracking helper");
 MODULE_ALIAS("ip_conntrack_ftp");
 MODULE_ALIAS_NFCT_HELPER("ftp");
 
-#ifdef CONFIG_LANTIQ_ALG_QOS
-#include <net/netfilter/nf_conntrack_core.h>
-#if 0
-#define DEBUGP printk
-#else
-#define DEBUGP(format, args...)
-#endif
-#endif
-
 /* This is slow, but it's simple. --RR */
 static char *ftp_buffer;
 
@@ -319,23 +310,6 @@ static int find_pattern(const char *data, size_t dlen,
 	return 1;
 }
 
-#ifdef CONFIG_LANTIQ_ALG_QOS
-	/*
-	 * The expect function for FTP ALG
-	 * This will mark the ALG protocol family for the FTP data/control traffic.
-	 */
-static void  ftp_expectfn(struct nf_conn *ct,struct nf_conntrack_expect *exp)
-{
-	spin_lock_bh(&nf_ftp_lock);
-	DEBUGP("\nMaster conntracker lantiq_alg_qos_mark is : %x \n",ct->lantiq_alg_qos_mark );
-	ct->lantiq_alg_qos_mark = LANTIQ_ALG_APP_FTP | LANTIQ_ALG_PROTO_DATA;
-	DEBUGP("\n Marked the Child conntrackeri with value: %x !!! \n",ct->lantiq_alg_qos_mark );
-
-	spin_unlock_bh(&nf_ftp_lock);
-	//return NF_ACCEPT; /* unused */
-}
-#endif
-
 /* Look up to see if we're just after a \n. */
 static int find_nl_seq(u32 seq, const struct nf_ct_ftp_master *info, int dir)
 {
@@ -520,20 +494,6 @@ skip_nl_seq:
 			  &ct->tuplehash[!dir].tuple.src.u3, daddr,
 			  IPPROTO_TCP, NULL, &cmd.u.tcp.port);
 
-#ifdef CONFIG_LANTIQ_ALG_QOS
-	/*  this is used to differentiate protocols in nf_nat_follow_master  */
-	exp->master->rtcp_expect_registered = 1;
-			   
-	DEBUGP("SRC PORT %d",exp->tuple.src.u.tcp.port);
-	DEBUGP("DST PORT %d",exp->tuple.dst.u.tcp.port);
-	/*
-	 * Set the Expect Function for FTP ALG
-	 */
-	exp->expectfn = ftp_expectfn;
-#else
-	exp->expectfn = NULL;
-#endif
-
 	/* Now, NAT might want to mangle the packet, and register the
 	 * (possibly changed) expectation itself. */
 	nf_nat_ftp = rcu_dereference(nf_nat_ftp_hook);
@@ -605,11 +565,7 @@ static int __init nf_conntrack_ftp_init(void)
 {
 	int i, j = -1, ret = 0;
 
-#ifdef CONFIG_LTQ_OPTIMIZATION
-	ftp_buffer = kmalloc(32768, GFP_KERNEL);
-#else
 	ftp_buffer = kmalloc(65536, GFP_KERNEL);
-#endif
 	if (!ftp_buffer)
 		return -ENOMEM;
 

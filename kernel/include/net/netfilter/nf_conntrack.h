@@ -26,22 +26,6 @@
 
 #include <net/netfilter/nf_conntrack_tuple.h>
 
-#ifdef CONFIG_LANTIQ_ALG_QOS
-#define LANTIQ_ALG_APP_ICMP        0x01000000
-#define LANTIQ_ALG_APP_FTP         0x02000000
-#define LANTIQ_ALG_APP_PPTP        0x03000000
-#define LANTIQ_ALG_APP_SIP         0x04000000
-#define LANTIQ_ALG_APP_CUSEEME     0x05000000
-#define LANTIQ_ALG_APP_H323        0x06000000
-#define LANTIQ_ALG_APP_RTSP        0x07000000
-#define LANTIQ_ALG_APP_IPSEC       0x08000000
-
-#define LANTIQ_ALG_PROTO_CTRL      0x00
-#define LANTIQ_ALG_PROTO_RTP       0x00010000
-#define LANTIQ_ALG_PROTO_RTCP      0x00020000
-#define LANTIQ_ALG_PROTO_DATA      0x00030000
-#endif  //CONFIG_LANTIQ_ALG_QOS
-
 /* per conntrack: protocol private data */
 union nf_conntrack_proto {
 	/* insert conntrack proto private data here */
@@ -106,11 +90,6 @@ struct nf_conn {
 
 	/* Timer function; drops refcnt when it goes off. */
 	struct timer_list timeout;
-	
-#ifdef CONFIG_LANTIQ_ALG_QOS
-	int lantiq_alg_qos_mark;
-	int rtcp_expect_registered;
-#endif
 
 #if defined(CONFIG_NF_CONNTRACK_MARK)
 	u_int32_t mark;
@@ -119,10 +98,6 @@ struct nf_conn {
 #ifdef CONFIG_NF_CONNTRACK_SECMARK
 	u_int32_t secmark;
 #endif
-#ifdef CONFIG_NF_CONNTRACK_EXTMARK
-	u_int32_t extmark;
-#endif
-
 
 	/* Extensions */
 	struct nf_ct_ext *ext;
@@ -332,11 +307,6 @@ extern unsigned int nf_conntrack_htable_size;
 extern unsigned int nf_conntrack_max;
 extern unsigned int nf_conntrack_hash_rnd;
 void init_nf_conntrack_hash_rnd(void);
-
-#if defined(CONFIG_LTQ_PPA_API_SW_FASTPATH)
-int get_conntrack_from_skb(struct sk_buff *skb, struct nf_conn **nfct, u_int8_t *set_reply);
-#endif
-
 
 #define NF_CT_STAT_INC(net, count)	  __this_cpu_inc((net)->ct.stat->count)
 #define NF_CT_STAT_INC_ATOMIC(net, count) this_cpu_inc((net)->ct.stat->count)

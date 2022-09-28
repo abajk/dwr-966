@@ -15,32 +15,47 @@
 #include <linux/clkdev.h>
 #include <linux/err.h>
 #include <linux/list.h>
+
 #include <asm/time.h>
+#include <asm/irq.h>
 #include <asm/div64.h>
+
 #include <lantiq_soc.h>
+
 #include "clk.h"
 #include "prom.h"
 
+/* lantiq socs have 3 static clocks */
+static struct clk cpu_clk_generic[4];
+
+void clkdev_add_static(unsigned long cpu, unsigned long fpi,
+			unsigned long io, unsigned long ppe)
+{
+	cpu_clk_generic[0].rate = cpu;
+	cpu_clk_generic[1].rate = fpi;
+	cpu_clk_generic[2].rate = io;
+	cpu_clk_generic[3].rate = ppe;
+}
+
 struct clk *clk_get_cpu(void)
 {
-	return clk_get_sys("cpu", "cpu");
+	return &cpu_clk_generic[0];
 }
-EXPORT_SYMBOL_GPL(clk_get_cpu);
 
 struct clk *clk_get_fpi(void)
 {
-	return clk_get_sys("fpi", "fpi");
+	return &cpu_clk_generic[1];
 }
 EXPORT_SYMBOL_GPL(clk_get_fpi);
 
 struct clk *clk_get_io(void)
 {
-	return clk_get_sys("io", "io");
+	return &cpu_clk_generic[2];
 }
 
 struct clk *clk_get_ppe(void)
 {
-	return clk_get_sys("ppe", "ppe");
+	return &cpu_clk_generic[3];
 }
 EXPORT_SYMBOL_GPL(clk_get_ppe);
 
@@ -54,60 +69,33 @@ unsigned long clk_get_rate(struct clk *clk)
 	if (unlikely(!clk_good(clk)))
 		return 0;
 
-#ifndef CONFIG_CPU_FREQ
 	if (clk->rate != 0)
 		return clk->rate;
-#endif
 
-	if (clk->get_rate != NULL) {
-		clk->rate = clk->get_rate();
-		return clk->rate;
-	}
-#if 0
-	if (clk->parent) {
-		pr_info("derive real clock speed for %s from clock %s ",
-			clk->cl.dev_id,
-			cpu_clk_generic[clk->parent - 1].cl.dev_id);
-		pr_info("with scale data 0x%08X\n", clk->scale_data);
-		return cpu_clk_generic[clk->parent - 1].rate;
-	}
-#endif
+	if (clk->get_rate != NULL)
+		return clk->get_rate();
+
 	return 0;
 }
 EXPORT_SYMBOL(clk_get_rate);
 
 int clk_set_rate(struct clk *clk, unsigned long rate)
 {
-	int i = 0;
-
 	if (unlikely(!clk_good(clk)))
 		return 0;
-
 	if (clk->rates && *clk->rates) {
 		unsigned long *r = clk->rates;
 
-		while (*r && (*r != rate)) {
+		while (*r && (*r != rate))
 			r++;
-			i++;
-		}
 		if (!*r) {
 			pr_err("clk %s.%s: trying to set invalid rate %ld\n",
 				clk->cl.dev_id, clk->cl.con_id, rate);
 			return -1;
 		}
 	}
-
-	if (clk->set_rate != NULL) {
-		if (clk->set_rate(rate) == 0) {
-			clk->rate = rate;
-			return 0;
-		}
-	}
-
-	pr_err("trying to set invalid clk %s.%s: rate %ld.\n",
-			clk->cl.dev_id, clk->cl.con_id, rate);
-	pr_err("clk_set_rate not supported for this clk.\n");
-	return -EINVAL;
+	clk->rate = rate;
+	return 0;
 }
 EXPORT_SYMBOL(clk_set_rate);
 
@@ -182,11 +170,7 @@ void __init plat_time_init(void)
 
 	ltq_soc_init();
 
-	clk = clk_get_sys("cpu", "cpu");
-	if (clk == NULL) {
-		pr_err("CPU clock structure not found\n");
-		return;
-	}
+	clk = clk_get_cpu();
 	mips_hpt_frequency = clk_get_rate(clk) / get_counter_resolution();
 	write_c0_compare(read_c0_count());
 	pr_info("CPU Clock: %ldMHz\n", clk_get_rate(clk) / 1000000);

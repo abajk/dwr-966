@@ -75,7 +75,6 @@ enum falcon_mux {
 	FALCON_MUX_GPIO = 0,
 	FALCON_MUX_RST,
 	FALCON_MUX_NTR,
-	FALCON_MUX_PPS,
 	FALCON_MUX_MDIO,
 	FALCON_MUX_LED,
 	FALCON_MUX_SPI,
@@ -115,7 +114,7 @@ static struct ltq_mfp_pin falcon_mfp[] = {
 	MFP_FALCON(GPIO2,	GPIO,	GPIO,   NONE,   NONE),
 	MFP_FALCON(GPIO3,	GPIO,	GPIO,   NONE,   NONE),
 	MFP_FALCON(GPIO4,	NTR,	GPIO,   NONE,   NONE),
-	MFP_FALCON(GPIO5,	NTR,	GPIO,   PPS,    NONE),
+	MFP_FALCON(GPIO5,	NTR,	GPIO,   NONE,   NONE),
 	MFP_FALCON(GPIO6,	RST,	GPIO,   NONE,   NONE),
 	MFP_FALCON(GPIO7,	MDIO,	GPIO,   NONE,   NONE),
 	MFP_FALCON(GPIO8,	MDIO,	GPIO,   NONE,   NONE),
@@ -169,7 +168,6 @@ static struct ltq_mfp_pin falcon_mfp[] = {
 static const unsigned pins_por[] = {GPIO0};
 static const unsigned pins_ntr[] = {GPIO4};
 static const unsigned pins_ntr8k[] = {GPIO5};
-static const unsigned pins_pps[] = {GPIO5};
 static const unsigned pins_hrst[] = {GPIO6};
 static const unsigned pins_mdio[] = {GPIO7, GPIO8};
 static const unsigned pins_bled[] = {GPIO9, GPIO10, GPIO11,
@@ -188,7 +186,6 @@ static struct ltq_pin_group falcon_grps[] = {
 	GRP_MUX("por", RST, pins_por),
 	GRP_MUX("ntr", NTR, pins_ntr),
 	GRP_MUX("ntr8k", NTR, pins_ntr8k),
-	GRP_MUX("pps", PPS, pins_pps),
 	GRP_MUX("hrst", RST, pins_hrst),
 	GRP_MUX("mdio", MDIO, pins_mdio),
 	GRP_MUX("bootled", LED, pins_bled),
@@ -204,7 +201,7 @@ static struct ltq_pin_group falcon_grps[] = {
 };
 
 static const char * const ltq_rst_grps[] = {"por", "hrst"};
-static const char * const ltq_ntr_grps[] = {"ntr", "ntr8k", "pps"};
+static const char * const ltq_ntr_grps[] = {"ntr", "ntr8k"};
 static const char * const ltq_mdio_grps[] = {"mdio"};
 static const char * const ltq_bled_grps[] = {"bootled"};
 static const char * const ltq_asc_grps[] = {"asc0", "asc1"};
@@ -455,17 +452,12 @@ static int pinctrl_falcon_probe(struct platform_device *pdev)
 		if (IS_ERR(falcon_info.membase[*bank]))
 			return PTR_ERR(falcon_info.membase[*bank]);
 		
-		clk_activate(falcon_info.clk[*bank]);
 		avail = pad_r32(falcon_info.membase[*bank],
 					LTQ_PADC_AVAIL);
 		pins = fls(avail);
-		if (pins) {
-		  lantiq_load_pin_desc(&falcon_pads[pad_count],
-								*bank, pins);
+		lantiq_load_pin_desc(&falcon_pads[pad_count], *bank, pins);
 		pad_count += pins;
-		} else {
-			clk_deactivate(falcon_info.clk[*bank]);
-		}
+		clk_enable(falcon_info.clk[*bank]);
 		dev_dbg(&pdev->dev, "found %s with %d pads\n",
 				res.name, pins);
 	}

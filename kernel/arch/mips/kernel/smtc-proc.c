@@ -67,8 +67,6 @@ static const struct file_operations smtc_proc_fops = {
 void init_smtc_stats(void)
 {
 	int i;
-	extern struct proc_dir_entry *get_mips_proc_dir(void);
-	struct proc_dir_entry *mips_proc_dir = get_mips_proc_dir();
 
 	for (i=0; i<NR_CPUS; i++) {
 		smtc_cpu_stats[i].timerints = 0;
@@ -77,5 +75,5 @@ void init_smtc_stats(void)
 
 	atomic_set(&smtc_fpu_recoveries, 0);
 
-	proc_create("smtc", 0444, mips_proc_dir, &smtc_proc_fops);
+	proc_create("smtc", 0444, NULL, &smtc_proc_fops);
 }

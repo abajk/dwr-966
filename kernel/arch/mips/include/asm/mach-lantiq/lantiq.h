@@ -4,7 +4,6 @@
  *  by the Free Software Foundation.
  *
  *  Copyright (C) 2010 John Crispin <blogic@openwrt.org>
- *  Copyright (C) 2013 Lei Chuanhua <chuanhua.lei@lantiq.com>
  */
 #ifndef _LANTIQ_H__
 #define _LANTIQ_H__
@@ -16,10 +15,6 @@
 /* generic reg access functions */
 #define ltq_r32(reg)		__raw_readl(reg)
 #define ltq_w32(val, reg)	__raw_writel(val, reg)
-
-#define ltq_r16(reg)		__raw_readw(reg)
-#define ltq_w16(val, reg)	__raw_writew(val, reg)
-
 #define ltq_w32_mask(clear, set, reg)	\
 	ltq_w32((ltq_r32(reg) & ~(clear)) | (set), reg)
 #define ltq_r8(reg)		__raw_readb(reg)
@@ -53,12 +48,6 @@ extern struct clk *clk_get_ppe(void);
 extern unsigned char ltq_boot_select(void);
 /* find out what caused the last cpu reset */
 extern int ltq_reset_cause(void);
-extern void ltq_reset_once(unsigned int module, ulong u);
-extern void ltq_hw_reset(unsigned int module);
-
-extern unsigned int ltq_get_cpu_id(void);
-extern unsigned int ltq_get_soc_type(void);
-extern unsigned int ltq_get_soc_rev(void);
 
 #define IOPORT_RESOURCE_START	0x10000000
 #define IOPORT_RESOURCE_END	0xffffffff

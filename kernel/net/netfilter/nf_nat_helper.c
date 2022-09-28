@@ -26,16 +26,6 @@
 #include <net/netfilter/nf_nat_core.h>
 #include <net/netfilter/nf_nat_helper.h>
 
-#ifdef CONFIG_LANTIQ_ALG_QOS
-#if 0
-#define DEBUGP printk
-#define DUMP_OFFSET(x)	printk("offset_before=%d, offset_after=%d, correction_pos=%u\n", x->offset_before, x->offset_after, x->correction_pos);
-#else
-#define DEBUGP(format, args...)
-#define DUMP_OFFSET(x)
-#endif
-#endif
-
 #define DUMP_OFFSET(x) \
 	pr_debug("offset_before=%d, offset_after=%d, correction_pos=%u\n", \
 		 x->offset_before, x->offset_after, x->correction_pos);
@@ -426,31 +416,6 @@ void nf_nat_follow_master(struct nf_conn *ct,
 			  struct nf_conntrack_expect *exp)
 {
 	struct nf_nat_range range;
-
-#ifdef CONFIG_LANTIQ_ALG_QOS
-	if(exp->master->rtcp_expect_registered == 1) { 
-		DEBUGP("\nMaster conntracker lantiq_alg_qos_mark is : %x \n",ct->lantiq_alg_qos_mark );
-		ct->lantiq_alg_qos_mark = LANTIQ_ALG_APP_FTP | LANTIQ_ALG_PROTO_DATA;
-		DEBUGP("\n Marked the Child conntrackeri with value: %x !!! \n",ct->lantiq_alg_qos_mark );
-	}
-	 
-	else if(exp->master->rtcp_expect_registered == 2 ) {
-		DEBUGP("\nMaster conntracker lantiq_alg_qos_mark(RTSP) is : %x \n",ct->lantiq_alg_qos_mark ); 
-		ct->lantiq_alg_qos_mark = LANTIQ_ALG_APP_RTSP | LANTIQ_ALG_PROTO_RTP;
-	}
-	
-	else if (exp->master->rtcp_expect_registered == 3 ) {
-		ct->lantiq_alg_qos_mark = LANTIQ_ALG_APP_H323 | LANTIQ_ALG_PROTO_RTP;
-	}
-		
-	else if (exp->master->rtcp_expect_registered == 4 ) {
-		ct->lantiq_alg_qos_mark = LANTIQ_ALG_APP_H323 | LANTIQ_ALG_PROTO_RTCP;
-	}
-				   
-	else if (exp->master->rtcp_expect_registered == 5 ) {
-		ct->lantiq_alg_qos_mark = LANTIQ_ALG_APP_H323;
-	}
-#endif
 
 	/* This must be a fresh one. */
 	BUG_ON(ct->status & IPS_NAT_DONE_MASK);

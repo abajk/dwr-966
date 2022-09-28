@@ -71,7 +71,6 @@ static unsigned int __init smvp_vpe_init(unsigned int tc, unsigned int mvpconf0,
 
 		/* Record this as available CPU */
 		set_cpu_possible(tc, true);
-		set_cpu_present(tc, true);
 		__cpu_number_map[tc]	= ++ncpu;
 		__cpu_logical_map[ncpu] = tc;
 	}
@@ -113,43 +112,12 @@ static void __init smvp_tc_init(unsigned int tc, unsigned int mvpconf0)
 	write_tc_c0_tchalt(TCHALT_H);
 }
 
-static void mp_send_ipi_single(int cpu, unsigned int action)
-{
-	unsigned long flags;
-
-	local_irq_save(flags);
-
-	switch (action) {
-	case SMP_CALL_FUNCTION:
-#ifdef CONFIG_MIPS_MALTA
-		gic_send_ipi(plat_ipi_call_int_xlate(cpu));
-#else
-/*Need to implement [platform specific thing and that function has to go here*/
-#endif
-		break;
-
-	case SMP_RESCHEDULE_YOURSELF:
-#ifdef CONFIG_MIPS_MALTA
-		gic_send_ipi(plat_ipi_resched_int_xlate(cpu));
-#else
-/*Need to implement [platform specific thing and that function has to go here*/
-#endif
-		break;
-	}
-
-	local_irq_restore(flags);
-}
-
 static void vsmp_send_ipi_single(int cpu, unsigned int action)
 {
 	int i;
 	unsigned long flags;
 	int vpflags;
 
-	if (gic_present) {
-		mp_send_ipi_single(cpu, action);
-		return;
-	}
 	local_irq_save(flags);
 
 	vpflags = dvpe();	/* can't access the other CPU's registers whilst MVPE enabled */
@@ -185,30 +153,17 @@ static void __cpuinit vsmp_init_secondary(void)
 {
 #ifdef CONFIG_IRQ_GIC
 	/* This is Malta specific: IPI,performance and timer interrupts */
-	if (gic_present) {
-#ifdef CONFIG_SOC_XWAY
-               set_c0_status(ST0_IM); //enable all the interrupt lines.
-#else
+	if (gic_present)
 		change_c0_status(ST0_IM, STATUSF_IP3 | STATUSF_IP4 |
 					 STATUSF_IP6 | STATUSF_IP7);
+	else
 #endif
-	} else {
-#endif
-#ifdef CONFIG_SOC_XWAY
-               set_c0_status(ST0_IM); //enable all the interrupt lines.
-#else
 		change_c0_status(ST0_IM, STATUSF_IP0 | STATUSF_IP1 |
 					 STATUSF_IP6 | STATUSF_IP7);
-#endif
-#ifdef CONFIG_IRQ_GIC
-	}
-#endif
 }
 
 static void __cpuinit vsmp_smp_finish(void)
 {
-	pr_debug("SMPMT: CPU%d: vsmp_smp_finish\n", smp_processor_id());
-
 	/* CDFIXME: remove this? */
 	write_c0_compare(read_c0_count() + (8* mips_hpt_frequency/HZ));
 
@@ -223,7 +178,6 @@ static void __cpuinit vsmp_smp_finish(void)
 
 static void vsmp_cpus_done(void)
 {
-	pr_debug("SMPMT: CPU%d: vsmp_cpus_done\n", smp_processor_id());
 }
 
 /*
@@ -237,8 +191,6 @@ static void vsmp_cpus_done(void)
 static void __cpuinit vsmp_boot_secondary(int cpu, struct task_struct *idle)
 {
 	struct thread_info *gp = task_thread_info(idle);
-	pr_debug("SMPMT: CPU%d: vsmp_boot_secondary cpu %d\n",
-		smp_processor_id(), cpu);
 	dvpe();
 	set_c0_mvpcontrol(MVPCONTROL_VPC);
 
@@ -261,8 +213,8 @@ static void __cpuinit vsmp_boot_secondary(int cpu, struct task_struct *idle)
 	/* global pointer */
 	write_tc_gpr_gp((unsigned long)gp);
 
-	local_flush_icache_range((unsigned long)gp,
-			(unsigned long)(gp + sizeof(struct thread_info)));
+	flush_icache_range((unsigned long)gp,
+			   (unsigned long)(gp + sizeof(struct thread_info)));
 
 	/* finally out of configuration and into chaos */
 	clear_c0_mvpcontrol(MVPCONTROL_VPC);
@@ -280,7 +232,6 @@ static void __init vsmp_smp_setup(void)
 	unsigned int mvpconf0, ntc, tc, ncpu = 0;
 	unsigned int nvpe;
 
-	pr_debug("SMPMT: CPU%d: vsmp_smp_setup\n", smp_processor_id());
 #ifdef CONFIG_MIPS_MT_FPAFF
 	/* If we have an FPU, enroll ourselves in the FPU-full mask */
 	if (cpu_has_fpu)
@@ -321,8 +272,6 @@ static void __init vsmp_smp_setup(void)
 
 static void __init vsmp_prepare_cpus(unsigned int max_cpus)
 {
-	pr_debug("SMPMT: CPU%d: vsmp_prepare_cpus %d\n",
-		smp_processor_id(), max_cpus);
 	mips_mt_set_cpuoptions();
 }
 

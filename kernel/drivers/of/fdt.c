@@ -24,6 +24,7 @@
 #endif /* CONFIG_PPC */
 
 #include <asm/page.h>
+
 char *of_fdt_get_string(struct boot_param_header *blob, u32 offset)
 {
 	return ((char *)blob) +
@@ -260,13 +261,8 @@ static unsigned long unflatten_dt_node(struct boot_param_header *blob,
 		if (strcmp(pname, "name") == 0)
 			has_name = 1;
 		l = strlen(pname) + 1;
-#ifndef CONFIG_MIPS_MALTA
 		pp = unflatten_dt_alloc(&mem, sizeof(struct property),
 					__alignof__(struct property));
-#else
-		pp = unflatten_dt_alloc(&mem, sizeof(struct property)+sz,
-					__alignof__(struct property));
-#endif
 		if (allnextpp) {
 			/* We accept flattened tree phandles either in
 			 * ePAPR-style "phandle" properties, or the
@@ -285,17 +281,9 @@ static unsigned long unflatten_dt_node(struct boot_param_header *blob,
 				np->phandle = be32_to_cpup((__be32 *)*p);
 			pp->name = pname;
 			pp->length = sz;
-#ifndef CONFIG_MIPS_MALTA
 			pp->value = (void *)*p;
-#else
-			pp->value = pp+1;
-#endif
 			*prev_pp = pp;
 			prev_pp = &pp->next;
-#ifdef CONFIG_MIPS_MALTA
-			memcpy(pp->value,*p, sz - 1);
-			((char *)pp->value)[sz - 1] = 0;
-#endif
 		}
 		*p = ALIGN((*p) + sz, 4);
 	}

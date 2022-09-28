@@ -19,17 +19,7 @@
 #include <linux/skbuff.h>
 #include <linux/if_vlan.h>
 #include <linux/netfilter_bridge.h>
-
-#ifdef CONFIG_LTQ_IPQOS_BRIDGE_EBT_IMQ
-#include <linux/netfilter_bridge/ebt_imq.h>
-extern int nf_ebt_queue(struct sk_buff *skb);
-#endif
-
 #include "br_private.h"
-
-#ifdef CONFIG_LTQ_MCAST_SNOOPING
-#define IS_MCAST_ADDR 0x1
-#endif
 
 static int deliver_clone(const struct net_bridge_port *prev,
 			 struct sk_buff *skb,
@@ -50,11 +40,8 @@ static inline unsigned int packet_length(const struct sk_buff *skb)
 	return skb->len - (skb->protocol == htons(ETH_P_8021Q) ? VLAN_HLEN : 0);
 }
 
-int __ebt_optimized br_dev_queue_push_xmit(struct sk_buff *skb)
+int br_dev_queue_push_xmit(struct sk_buff *skb)
 {
-	#ifdef CONFIG_LTQ_IPQOS_BRIDGE_EBT_IMQ
-	int retval = -1;
-	#endif
 	/* ip_fragment doesn't copy the MAC header */
 	if (nf_bridge_maybe_copy_header(skb) ||
 	    (packet_length(skb) > skb->dev->mtu && !skb_is_gso(skb))) {
@@ -62,27 +49,14 @@ int __ebt_optimized br_dev_queue_push_xmit(struct sk_buff *skb)
 	} else {
 		skb_push(skb, ETH_HLEN);
 		br_drop_fake_rtable(skb);
-
-		#ifdef CONFIG_LTQ_IPQOS_BRIDGE_EBT_IMQ
-			if (skb->imq_flags & IMQ_F_ENQUEUE) {
-				retval = nf_ebt_queue(skb);
-			}
-			if (retval < 0) {
-				dev_queue_xmit(skb);
-			}
-		#else
-			dev_queue_xmit(skb);
-		#endif
+		dev_queue_xmit(skb);
 	}
 
 	return 0;
 }
 
-int __ebt_optimized br_forward_finish(struct sk_buff *skb)
+int br_forward_finish(struct sk_buff *skb)
 {
-#ifdef CONFIG_LANTIQ_IPQOS_MARK_SKBPRIO
-	skb_mark_priority(skb);
-#endif
 	return BR_HOOK(NFPROTO_BRIDGE, NF_BR_POST_ROUTING, skb, NULL, skb->dev,
 		       br_dev_queue_push_xmit);
 
@@ -110,7 +84,7 @@ static void __br_deliver(const struct net_bridge_port *to, struct sk_buff *skb)
 		br_forward_finish);
 }
 
-static void __ebt_optimized __br_forward(const struct net_bridge_port *to, struct sk_buff *skb)
+static void __br_forward(const struct net_bridge_port *to, struct sk_buff *skb)
 {
 	struct net_device *indev;
 
@@ -143,7 +117,7 @@ void br_deliver(const struct net_bridge_port *to, struct sk_buff *skb)
 }
 
 /* called with rcu_read_lock */
-void __ebt_optimized br_forward(const struct net_bridge_port *to, struct sk_buff *skb, struct sk_buff *skb0)
+void br_forward(const struct net_bridge_port *to, struct sk_buff *skb, struct sk_buff *skb0)
 {
 	if (should_deliver(to, skb) && !(to->flags & BR_ISOLATE_MODE)) {
 		if (skb0)
@@ -188,17 +162,6 @@ static struct net_bridge_port *maybe_deliver(
 	if (!prev)
 		goto out;
 
-#ifdef CONFIG_LTQ_MCAST_SNOOPING
-		if ((bridge_igmp_snooping || bridge_mld_snooping) && 
-			(eth_hdr(skb)->h_dest[0] & IS_MCAST_ADDR) && 
-			(br_selective_flood(prev, skb) == 0)) {
-				prev = p;
-				return p;
-		}
-#endif
-			
-
-
 	err = deliver_clone(prev, skb, __packet_hook);
 	if (err)
 		return ERR_PTR(err);
@@ -208,7 +171,7 @@ out:
 }
 
 /* called under bridge lock */
-static void __ebt_optimized br_flood(struct net_bridge *br, struct sk_buff *skb,
+static void br_flood(struct net_bridge *br, struct sk_buff *skb,
 		     struct sk_buff *skb0,
 		     void (*__packet_hook)(const struct net_bridge_port *p,
 					   struct sk_buff *skb),
@@ -232,27 +195,9 @@ static void __ebt_optimized br_flood(struct net_bridge *br, struct sk_buff *skb,
 		goto out;
 
 	if (skb0)
-	{
-	#ifdef CONFIG_LTQ_MCAST_SNOOPING
-		if ((bridge_igmp_snooping || bridge_mld_snooping) && 
-			(eth_hdr(skb)->h_dest[0] & IS_MCAST_ADDR) && 
-			(br_selective_flood(prev, skb) == 0)){}
-//			kfree_skb(skb);
-		else
-	#endif
 		deliver_clone(prev, skb, __packet_hook);
-	}
 	else
-	{
-#ifdef CONFIG_LTQ_MCAST_SNOOPING
-		if ((bridge_igmp_snooping || bridge_mld_snooping) && 
-			(eth_hdr(skb)->h_dest[0] & IS_MCAST_ADDR) && 
-			(br_selective_flood(prev, skb) == 0))
-			kfree_skb(skb);
-		else
-#endif	
 		__packet_hook(prev, skb);
-	}
 	return;
 
 out:

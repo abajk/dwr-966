@@ -30,24 +30,6 @@ EXPORT_SYMBOL_GPL(ebu_lock);
  */
 static struct ltq_soc_info soc_info;
 
-unsigned int ltq_get_cpu_id(void)
-{
-	return soc_info.partnum;
-}
-EXPORT_SYMBOL(ltq_get_cpu_id);
-
-unsigned int ltq_get_soc_type(void)
-{
-	return soc_info.type;
-}
-EXPORT_SYMBOL(ltq_get_soc_type);
-
-unsigned int ltq_get_soc_rev(void)
-{
-	return soc_info.rev;
-}
-EXPORT_SYMBOL(ltq_get_soc_rev);
-
 const char *get_system_type(void)
 {
 	return soc_info.sys_type;
@@ -75,8 +57,6 @@ static void __init prom_init_cmdline(void)
 	}
 }
 
-extern struct boot_param_header __image_dtb;
-
 void __init plat_mem_setup(void)
 {
 	ioport_resource.start = IOPORT_RESOURCE_START;
@@ -90,7 +70,7 @@ void __init plat_mem_setup(void)
 	 * Load the builtin devicetree. This causes the chosen node to be
 	 * parsed resulting in our memory appearing
 	 */
-	__dt_setup_arch(&__image_dtb);
+	__dt_setup_arch(&__dtb_start);
 }
 
 void __init device_tree_init(void)

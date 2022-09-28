@@ -42,28 +42,6 @@
 #include <net/act_api.h>
 #include <net/pkt_cls.h>
 
-#ifdef CONFIG_LANTIQ_ALG_QOS
-#include <net/netfilter/nf_conntrack_expect.h>
-#include <net/netfilter/nf_conntrack_l3proto.h>
-#include <net/netfilter/nf_conntrack_l4proto.h>
-#include <net/netfilter/nf_conntrack_helper.h>
-#include <net/netfilter/nf_conntrack_core.h>
-
-// For debugging
-#if 0
-#define DEBUGP printk
-#else
-#define DEBUGP(format, args...)
-#endif
-
-#if 0  // for testing purpose
-#define LANTIQ_ALG_QOS_DBG printk
-#else
-#define LANTIQ_ALG_QOS_DBG(format, args...)
-#endif
-
-#endif /* CONFIG_LANTIQ_ALG_QOS */
-
 struct tc_u_knode {
 	struct tc_u_knode	*next;
 	u32			handle;
@@ -81,10 +59,6 @@ struct tc_u_knode {
 #ifdef CONFIG_CLS_U32_MARK
 	struct tc_u32_mark	mark;
 #endif
-#ifdef CONFIG_CLS_U32_EXTMARK
-	struct tc_u32_mark	extmark;
-#endif
-
 	struct tc_u32_sel	sel;
 };
 
@@ -137,32 +111,12 @@ static int u32_classify(struct sk_buff *skb, const struct tcf_proto *tp, struct 
 #endif
 	int i, r;
 
-#ifdef CONFIG_LANTIQ_ALG_QOS
-	struct nf_conn *alg_ip_conntrack;   //,*alg_master_conntrack;
-	enum ip_conntrack_info ctinfo;
-	//alg_master_conntrack = ip_conntrack_get(skb,&ctinfo);
-	alg_ip_conntrack = nf_ct_get(skb,&ctinfo);  //(struct ip_conntrack *) alg_master_conntrack->master;
-
-	if ( alg_ip_conntrack ) {
-		LANTIQ_ALG_QOS_DBG("\n[u32_classify: lantiq_alg_qos_mark value obatined is: %x ]\n",
-			alg_ip_conntrack->lantiq_alg_qos_mark );
-	}
-  else {
-		LANTIQ_ALG_QOS_DBG("\n[u32_classify: alg_ip_conntrack is NULL ] \n" );
-	}
-#endif  // CONFIG_LANTIQ_ALG_QOS
-
 next_ht:
 	n = ht->ht[sel];
 
 next_knode:
 	if (n) {
 		struct tc_u32_key *key = n->sel.keys;
-
-#ifdef CONFIG_LANTIQ_ALG_QOS
-	DEBUGP ("sel.nkeys: %x\n", n->sel.nkeys);
-	DEBUGP ("skb->dev->ifindex: %x\n", skb->dev->ifindex);
-#endif
 
 #ifdef CONFIG_CLS_U32_PERF
 		n->pf->rcnt += 1;
@@ -178,41 +132,7 @@ next_knode:
 		}
 #endif
 
-#ifdef CONFIG_CLS_U32_EXTMARK
-		if ((skb->extmark & n->extmark.mask) != n->extmark.val) {
-			n = n->next;
-			goto next_knode;
-		} else {
-			n->extmark.success++;
-		}
-#endif
 		for (i = n->sel.nkeys; i > 0; i--, key++) {
-#ifdef CONFIG_LANTIQ_ALG_QOS
-	if(key->off == 0x1000) {
-		if ( !alg_ip_conntrack) {
-			return -1;
-		}
-
-	//if(((alg_ip_conntrack->lantiq_alg_qos_mark & key->mask ) == key->val) || (((skb->dev->ifindex) & key->mask) == key->val))
-		if((alg_ip_conntrack->lantiq_alg_qos_mark & key->mask ) == key->val) {
-			DEBUGP ("[**SUCCESS** [190] Offset: %x  Offset2: %x Offmask %x: keyValue: %x Mask: %x skb->tc_index: %x lantiq_alg_qos_mark: %x ] \n", key->off, off2, key->offmask, key->val, key->mask, skb->tc_index,alg_ip_conntrack->lantiq_alg_qos_mark );
-			continue;
-		}
-		else if(((skb->dev->ifindex) & key->mask) == key->val) {
-			DEBUGP ("[**SUCCESS** [190] Offset: %x  Offset2: %x Offmask %x: keyValue: %x Mask: %x skb->tc_index: %x lantiq_phy_mask: %x ] \n", key->off, off2, key->offmask, key->val, key->mask, skb->tc_index,skb->dev->ifindex);
-			continue;
-		}
-		else {
-			DEBUGP ("[**FAILURE**:[184] Offset: %x  Offset2: %x Offmask %x: keyValue: %x Mask: %x skb->tc_index: %x lantiq_alg_qos_mark: %x ] \n", key->off, off2, key->offmask, key->val, key->mask, skb->tc_index,alg_ip_conntrack->lantiq_alg_qos_mark );
-			n = n->next;
-			goto next_knode;
-		}
-  }
-
-	DEBUGP ("[192] Offset: %x  Offset2: %x Offmask %x: Value: %x Mask: %x\n", key->off, off2, key->offmask, key->val, key->mask);
-
-#endif // CONFIG_LANTIQ_ALG_QOS
-
 			int toff = off + key->off + (off2 & key->offmask);
 			__be32 *data, hdata;
 
@@ -566,9 +486,6 @@ static const struct nla_policy u32_policy[TCA_U32_MAX + 1] = {
 	[TCA_U32_SEL]		= { .len = sizeof(struct tc_u32_sel) },
 	[TCA_U32_INDEV]		= { .type = NLA_STRING, .len = IFNAMSIZ },
 	[TCA_U32_MARK]		= { .len = sizeof(struct tc_u32_mark) },
-#ifdef CONFIG_CLS_U32_EXTMARK
-	[TCA_U32_EXTMARK]		= { .len = sizeof(struct tc_u32_mark) },
-#endif
 };
 
 static int u32_set_parms(struct net *net, struct tcf_proto *tp,
@@ -740,16 +657,6 @@ static int u32_change(struct net *net, struct sk_buff *in_skb,
 	}
 #endif
 
-#ifdef CONFIG_CLS_U32_EXTMARK
-	if (tb[TCA_U32_EXTMARK]) {
-		struct tc_u32_mark *extmark;
-
-		extmark = nla_data(tb[TCA_U32_EXTMARK]);
-		memcpy(&n->extmark, extmark, sizeof(struct tc_u32_mark));
-		n->extmark.success = 0;
-	}
-#endif
-
 	err = u32_set_parms(net, tp, base, ht, n, tb, tca[TCA_RATE]);
 	if (err == 0) {
 		struct tc_u_knode **ins;
@@ -849,11 +756,6 @@ static int u32_dump(struct tcf_proto *tp, unsigned long fh,
 #ifdef CONFIG_CLS_U32_MARK
 		if ((n->mark.val || n->mark.mask) &&
 		    nla_put(skb, TCA_U32_MARK, sizeof(n->mark), &n->mark))
-			goto nla_put_failure;
-#endif
-#ifdef CONFIG_CLS_U32_EXTMARK
-		if ((n->extmark.val || n->extmark.mask) &&
-		    nla_put(skb, TCA_U32_EXTMARK, sizeof(n->extmark), &n->extmark))
 			goto nla_put_failure;
 #endif
 

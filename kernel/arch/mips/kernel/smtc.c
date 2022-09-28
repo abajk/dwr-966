@@ -110,11 +110,7 @@ unsigned int smtc_status;
 
 static int vpe0limit;
 static int ipibuffers;
-#ifdef CONFIG_LTQ_VPE_EXT
-int nostlb = 0;
-#else
 static int nostlb;
-#endif
 static int asidmask;
 unsigned long smtc_asid_mask = 0xff;
 
@@ -566,18 +562,10 @@ void smtc_prepare_cpus(int cpus)
 			 * Clear ERL/EXL of VPEs other than 0
 			 * and set restricted interrupt enable/mask.
 			 */
-
-#ifdef CONFIG_SOC_XWAY // Enable IE and IM bits for all the intr lines.
-                        write_vpe_c0_status((read_vpe_c0_status()
-                                & ~(ST0_BEV | ST0_ERL | ST0_EXL))
-                                | (ST0_IM | ST0_IE));
-#else
-
 			write_vpe_c0_status((read_vpe_c0_status()
 				& ~(ST0_BEV | ST0_ERL | ST0_EXL | ST0_IM))
 				| (STATUSF_IP0 | STATUSF_IP1 | STATUSF_IP7
 				| ST0_IE));
-#endif
 			/*
 			 * set config to be the same as vpe0,
 			 *  particularly kseg0 coherency alg
@@ -1406,13 +1394,6 @@ void smtc_get_new_mmu_context(struct mm_struct *mm, unsigned long cpu)
 	asid = asid_cache(cpu);
 
 	do {
-#ifdef CONFIG_LTQ_VPE_EXT
-	/* If TLB is shared between AP and RP (AP is running SMTC),
-	leave out max ASID i.e., ASID_MASK for RP
-	*/
-	if (!nostlb && ((asid & ASID_MASK) == (ASID_MASK - 1)))
-		asid++;
-#endif
 		if (!((asid += ASID_INC) & ASID_MASK) ) {
 			if (cpu_has_vtag_icache)
 				flush_icache_all();

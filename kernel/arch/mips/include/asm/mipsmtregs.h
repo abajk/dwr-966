@@ -31,30 +31,13 @@
 #define read_c0_vpeconf1()		__read_32bit_c0_register($1, 3)
 #define write_c0_vpeconf1(val)		__write_32bit_c0_register($1, 3, val)
 
-#define read_c0_vpeschedule()          __read_32bit_c0_register($1, 5)
-#define write_c0_vpeschedule(val)      __write_32bit_c0_register($1, 5, val)
-
-#define read_c0_vpeschefback()         __read_32bit_c0_register($1, 6)
-#define write_c0_vpeschefback(val)     __write_32bit_c0_register($1, 6, val)
-
-#define read_c0_vpeopt()              __read_32bit_c0_register($1, 7)
-#define write_c0_vpeopt(val)          __write_32bit_c0_register($1, 7, val)
-
 #define read_c0_tcstatus()		__read_32bit_c0_register($2, 1)
 #define write_c0_tcstatus(val)		__write_32bit_c0_register($2, 1, val)
 
 #define read_c0_tcbind()		__read_32bit_c0_register($2, 2)
-#define write_c0_tcbind(val)           __write_32bit_c0_register($2, 2, val)
 
 #define read_c0_tccontext()		__read_32bit_c0_register($2, 5)
 #define write_c0_tccontext(val)		__write_32bit_c0_register($2, 5, val)
-
-#define read_c0_tcschedule()           __read_32bit_c0_register($2, 6)
-#define write_c0_tcschedule(val)       __write_32bit_c0_register($2, 6, val)
-
-#define read_c0_tcschefback()          __read_32bit_c0_register($2, 7)
-#define write_c0_tcschefback(val)      __write_32bit_c0_register($2, 7, val)
-
 
 #else /* Assembly */
 /*
@@ -94,10 +77,6 @@
 #define MVPCONTROL_STLB_SHIFT	2
 #define MVPCONTROL_STLB		(_ULCAST_(1) << MVPCONTROL_STLB_SHIFT)
 
-#ifdef CONFIG_LTQ_VPE_CACHE_SPLIT
-#define MVPCONTROL_CPA_SHIFT   3
-#define MVPCONTROL_CPA         (_ULCAST_(1) << MVPCONTROL_CPA_SHIFT)
-#endif
 
 /* MVPConf0 fields */
 #define MVPCONF0_PTC_SHIFT	0
@@ -108,12 +87,6 @@
 #define MVPCONF0_TCA		( _ULCAST_(1) << MVPCONF0_TCA_SHIFT)
 #define MVPCONF0_PTLBE_SHIFT	16
 #define MVPCONF0_PTLBE		(_ULCAST_(0x3ff) << MVPCONF0_PTLBE_SHIFT)
-
-#ifdef CONFIG_LTQ_VPE_CACHE_SPLIT
-#define MVPCONF0_PCP_SHIFT     27
-#define MVPCONF0_PCP           (_ULCAST_(1) << MVPCONF0_PCP_SHIFT)
-#endif
-
 #define MVPCONF0_TLBS_SHIFT	29
 #define MVPCONF0_TLBS		(_ULCAST_(1) << MVPCONF0_TLBS_SHIFT)
 #define MVPCONF0_M_SHIFT	31
@@ -151,12 +124,6 @@
 #define VPECONF0_VPA		(_ULCAST_(1) << VPECONF0_VPA_SHIFT)
 #define VPECONF0_MVP_SHIFT	1
 #define VPECONF0_MVP		(_ULCAST_(1) << VPECONF0_MVP_SHIFT)
-#ifdef CONFIG_LTQ_VPE_CACHE_SPLIT
-#define VPECONF0_ICS_SHIFT      16
-#define VPECONF0_ICS           (_ULCAST_(1) << VPECONF0_ICS_SHIFT)
-#define VPECONF0_DCS_SHIFT      17
-#define VPECONF0_DCS            (_ULCAST_(1) << VPECONF0_DCS_SHIFT)
-#endif
 #define VPECONF0_XTC_SHIFT	21
 #define VPECONF0_XTC		(_ULCAST_(0xff) << VPECONF0_XTC_SHIFT)
 
@@ -167,21 +134,6 @@
 #define VPECONF1_NCP2		(_ULCAST_(0xff) << VPECONF1_NCP2_SHIFT)
 #define VPECONF1_NCX_SHIFT	20
 #define VPECONF1_NCX		(_ULCAST_(0xff) << VPECONF1_NCX_SHIFT)
-
-#ifdef CONFIG_LTQ_VPE_CACHE_SPLIT
-/* VPEOpt fields */
-#define VPEOPT_DWX_SHIFT       0
-#define VPEOPT_IWX_SHIFT       8
-#define VPEOPT_IWX0            ( _ULCAST_(0x1) << VPEOPT_IWX_SHIFT)
-#define VPEOPT_IWX1            ( _ULCAST_(0x2) << VPEOPT_IWX_SHIFT)
-#define VPEOPT_IWX2            ( _ULCAST_(0x4) << VPEOPT_IWX_SHIFT)
-#define VPEOPT_IWX3            ( _ULCAST_(0x8) << VPEOPT_IWX_SHIFT)
-#define VPEOPT_DWX0            ( _ULCAST_(0x1) << VPEOPT_DWX_SHIFT)
-#define VPEOPT_DWX1            ( _ULCAST_(0x2) << VPEOPT_DWX_SHIFT)
-#define VPEOPT_DWX2            ( _ULCAST_(0x4) << VPEOPT_DWX_SHIFT)
-#define VPEOPT_DWX3            ( _ULCAST_(0x8) << VPEOPT_DWX_SHIFT)
-#endif
-
 
 /* TCStatus fields (per TC) */
 #define TCSTATUS_TASID		(_ULCAST_(0xff))
@@ -411,10 +363,6 @@ do {									\
 #define write_vpe_c0_vpeconf0(val)	mttc0(1, 2, val)
 #define read_vpe_c0_vpeconf1()		mftc0(1, 3)
 #define write_vpe_c0_vpeconf1(val)	mttc0(1, 3, val)
-#define read_vpe_c0_vpeschedule()      mftc0(1, 5)
-#define write_vpe_c0_vpeschedule(val)  mttc0(1, 5, val)
-#define read_vpe_c0_vpeschefback()     mftc0(1, 6)
-#define write_vpe_c0_vpeschefback(val) mttc0(1, 6, val)
 #define read_vpe_c0_count()		mftc0(9, 0)
 #define write_vpe_c0_count(val)		mttc0(9, 0, val)
 #define read_vpe_c0_status()		mftc0(12, 0)
@@ -434,10 +382,6 @@ do {									\
 #define read_vpe_c0_epc()		mftc0(14, 0)
 #define write_vpe_c0_epc(val)		mttc0(14, 0, val)
 
-#define read_vpe_c0_vpeopt()            mftc0(1, 7)
-#define write_vpe_c0_vpeopt(val)        mttc0(1, 7, val)
-#define read_vpe_c0_wired()            mftc0(6, 0)
-#define write_vpe_c0_wired(val)                mttc0(6, 0, val)
 
 /* TC */
 #define read_tc_c0_tcstatus()		mftc0(2, 1)
@@ -450,13 +394,7 @@ do {									\
 #define write_tc_c0_tchalt(val)		mttc0(2, 4, val)
 #define read_tc_c0_tccontext()		mftc0(2, 5)
 #define write_tc_c0_tccontext(val)	mttc0(2, 5, val)
-#define read_tc_c0_tcschedule()         mftc0(2, 6)
-#define write_tc_c0_tcschedule(val)    	mttc0(2,6,val)
-#define read_tc_c0_tcschefback()       	mftc0(2, 7)
-#define write_tc_c0_tcschefback(val)   	mttc0(2,7,val)
-#define read_tc_c0_entryhi()            mftc0(10, 0)
-#define write_tc_c0_entryhi(val)        mttc0(10,0,val)
-            
+
 /* GPR */
 #define read_tc_gpr_sp()		mftgpr(29)
 #define write_tc_gpr_sp(val)		mttgpr(29, val)

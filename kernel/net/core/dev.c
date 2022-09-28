@@ -129,17 +129,8 @@
 #include <linux/inetdevice.h>
 #include <linux/cpu_rmap.h>
 #include <linux/static_key.h>
-#if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
-#include <linux/imq.h>
-#endif
 
 #include "net-sysfs.h"
-
-#if defined(CONFIG_LTQ_UDP_REDIRECT) || defined(CONFIG_LTQ_UDP_REDIRECT_MODULE)
-#include <net/udp.h>
-#include <linux/udp_redirect.h>
-#endif
-
 
 /* Instead of increasing this, you should create a hash table. */
 #define MAX_GRO_SKBS 8
@@ -2582,12 +2573,7 @@ int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 			}
 		}
 
-#if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
-		if (!list_empty(&ptype_all) &&
-					!(skb->imq_flags & IMQ_F_ENQUEUE))
-#else
 		if (!list_empty(&ptype_all))
-#endif
 			dev_queue_xmit_nit(skb, dev);
 
 #ifdef CONFIG_ETHERNET_PACKET_MANGLE
@@ -2603,11 +2589,7 @@ int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 		} else {
 			rc = NETDEV_TX_OK;
 		}
-		#ifdef CONFIG_LTQ_IPQOS_BRIDGE_EBT_IMQ
-		if (txq && (rc == NETDEV_TX_OK))
-		#else
 		if (rc == NETDEV_TX_OK)
-		#endif
 			txq_trans_update(txq);
 		return rc;
 	}
@@ -2642,9 +2624,6 @@ gso:
 			skb->next = nskb;
 			return rc;
 		}
-		#ifdef CONFIG_LTQ_IPQOS_BRIDGE_EBT_IMQ
-		if (txq)
-		#endif
 		txq_trans_update(txq);
 		if (unlikely(netif_xmit_stopped(txq) && skb->next))
 			return NETDEV_TX_BUSY;
@@ -2918,10 +2897,6 @@ static inline void ____napi_schedule(struct softnet_data *sd,
 	list_add_tail(&napi->poll_list, &sd->poll_list);
 	__raise_softirq_irqoff(NET_RX_SOFTIRQ);
 }
-
-#if defined(CONFIG_LTQ_PPA_API_SW_FASTPATH)
-extern int32_t (*ppa_sw_fastpath_send_hook)(struct sk_buff *skb);
-#endif
 
 #ifdef CONFIG_RPS
 
@@ -3215,15 +3190,6 @@ int netif_rx(struct sk_buff *skb)
 	net_timestamp_check(netdev_tstamp_prequeue, skb);
 
 	trace_netif_rx(skb);
-
-#if defined(CONFIG_LTQ_PPA_API_SW_FASTPATH)
-        if(ppa_sw_fastpath_send_hook!=NULL) {
-                if(ppa_sw_fastpath_send_hook(skb) == 0)
-                        return NET_RX_SUCCESS;
-        }
-#endif
-
-
 #ifdef CONFIG_RPS
 	if (static_key_false(&rps_needed)) {
 		struct rps_dev_flow voidflow, *rflow = &voidflow;

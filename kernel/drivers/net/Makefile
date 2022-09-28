@@ -9,9 +9,7 @@ obj-$(CONFIG_BONDING) += bonding/
 obj-$(CONFIG_DUMMY) += dummy.o
 obj-$(CONFIG_EQUALIZER) += eql.o
 obj-$(CONFIG_IFB) += ifb.o
-obj-$(CONFIG_IMQ) += imq.o
 obj-$(CONFIG_MACVLAN) += macvlan.o
-obj-$(CONFIG_LTQ_ETHSW) += lantiq_ethsw.o
 obj-$(CONFIG_MACVTAP) += macvtap.o
 obj-$(CONFIG_MII) += mii.o
 obj-$(CONFIG_MDIO) += mdio.o
@@ -74,6 +72,3 @@ obj-$(CONFIG_USB_CDC_PHONET)   += usb/
 
 obj-$(CONFIG_HYPERV_NET) += hyperv/
 obj-$(CONFIG_NTB_NETDEV) += ntb_netdev.o
-obj-$(CONFIG_LTQ_PTM)	 += lantiq_ptm/
-
-obj-$(CONFIG_LTQ_PPA) += lantiq_ppa/

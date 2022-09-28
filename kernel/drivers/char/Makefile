@@ -62,7 +62,3 @@ obj-$(CONFIG_JS_RTC)		+= js-rtc.o
 js-rtc-y = rtc.o
 
 obj-$(CONFIG_TILE_SROM)		+= tile-srom.o
-
-obj-$(CONFIG_LTQ_VOIP_TIMER)     += ltq_voip_timer/
-
-obj-$(CONFIG_LTQ_TEMP_SENSOR)             += ts-xway.o

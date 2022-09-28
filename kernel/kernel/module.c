@@ -71,10 +71,6 @@
 #define ARCH_SHF_SMALL 0
 #endif
 
-#ifdef CONFIG_STATIC_WLAN_MEMORY
-unsigned int wlan_flag = 0;
-#endif
-
 /*
  * Modules' sections will be aligned on page boundaries
  * to ensure complete separation of code and data, but
@@ -2960,15 +2956,6 @@ static struct module *layout_and_allocate(struct load_info *info, int flags)
 	   special cases for the architectures. */
 	layout_sections(mod, info);
 	layout_symtab(mod, info);
-
-#ifdef CONFIG_STATIC_WLAN_MEMORY
-	wlan_flag = 0;
-
-	/* prior reservation of phys mem for mtlk is already taken care */
-        if (!strcmp(mod->name, "mtlk")){
-        	wlan_flag = 1;
-        }
-#endif
 
 	/* Allocate and move to the final place */
 	err = move_module(mod, info);

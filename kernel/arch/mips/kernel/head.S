@@ -146,18 +146,11 @@ EXPORT(__image_cmdline)
 	.fill	0x400
 #endif /* CONFIG_IMAGE_CMDLINE_HACK */
 
-	.ascii  "OWRTDTB:"
-	EXPORT(__image_dtb)
-	.fill   0x4000
 	__REF
-
-#ifdef CONFIG_EVA
-	.align  8
-#endif
 
 NESTED(kernel_entry, 16, sp)			# kernel entry point
 
-	kernel_entry_setup                      # cpu specific setup
+	kernel_entry_setup			# cpu specific setup
 
 	setup_c0_status_pri
 
@@ -165,9 +158,6 @@ NESTED(kernel_entry, 16, sp)			# kernel entry point
 	   so we jump there.  */
 	PTR_LA	t0, 0f
 	jr	t0
-#ifdef CONFIG_EVA
-	.align  8
-#endif
 0:
 
 #ifdef CONFIG_MIPS_MT_SMTC
@@ -220,13 +210,7 @@ NESTED(kernel_entry, 16, sp)			# kernel entry point
  * SMP slave cpus entry point.	Board specific code for bootstrap calls this
  * function after setting up the stack and gp registers.
  */
-
-#ifdef CONFIG_EVA
-	.align  8
-#endif
-
 NESTED(smp_bootstrap, 16, sp)
-
 #ifdef CONFIG_MIPS_MT_SMTC
 	/*
 	 * Read-modify-writes of Status must be atomic, and this
@@ -238,10 +222,8 @@ NESTED(smp_bootstrap, 16, sp)
 	DMT	10	# dmt t2 /* t0, t1 are used by CLI and setup_c0_status() */
 	jal	mips_ihb
 #endif /* CONFIG_MIPS_MT_SMTC */
-
-	smp_slave_setup
 	setup_c0_status_sec
-
+	smp_slave_setup
 #ifdef CONFIG_MIPS_MT_SMTC
 	andi	t2, t2, VPECONTROL_TE
 	beqz	t2, 2f
@@ -249,9 +231,6 @@ NESTED(smp_bootstrap, 16, sp)
 2:
 #endif /* CONFIG_MIPS_MT_SMTC */
 	j	start_secondary
-#ifdef CONFIG_EVA
-	.align  8
-#endif
 	END(smp_bootstrap)
 #endif /* CONFIG_SMP */
 

@@ -37,7 +37,6 @@
 #include <linux/vmalloc.h>
 #include <linux/elf.h>
 #include <linux/seq_file.h>
-#include <linux/spinlock.h>
 #include <linux/syscalls.h>
 #include <linux/moduleloader.h>
 #include <linux/interrupt.h>
@@ -50,9 +49,7 @@
 #include <asm/cpu.h>
 #include <asm/mips_mt.h>
 #include <asm/processor.h>
-#include <asm/setup.h>
 #include <asm/vpe.h>
-#include <linux/cred.h>
 
 typedef void *vpe_handle;
 
@@ -71,69 +68,6 @@ static char module_name[] = "vpe";
 static int major;
 static const int minor = 1;	/* fixed for now  */
 
-#ifdef CONFIG_LTQ_VPE_EXT
-static int is_sdepgm;
-extern int stlb;
-extern int vpe0_wired;
-extern int vpe1_wired;
-unsigned int vpe1_load_addr;
-
-//#define set_c0_mvpcontrol(MVPCONTROL_VPC) write_c0_mvpcontrol(read_c0_mvpcontrol() | MVPCONTROL_VPC); ehb();
-//#define clear_c0_mvpcontrol(MVPCONTROL_VPC) write_c0_mvpcontrol(read_c0_mvpcontrol() & ~MVPCONTROL_VPC); ehb();
-
-static int __init load_address(char *str)
-{
-	get_option(&str, &vpe1_load_addr);
-	return 1;
-}
-
-__setup("vpe1_load_addr=", load_address);
-
-#include <asm/setup.h>
-#include <asm/ltq_vpe.h>
-char command_line[COMMAND_LINE_SIZE * 2];
-extern char *saved_command_line;
-static unsigned int vpe1_mem;
-static void __init vpe1mem(void)
-{
-	char *ptr;
-	ptr = strstr(command_line, "vpe1_mem=");
-
-	if (ptr && (ptr != command_line) && (*(ptr - 1) != ' '))
-		ptr = strstr(ptr, " vpe1_mem=");
-
-	if (ptr)
-		vpe1_mem = memparse(ptr + 9, &ptr);
-       printk("vpe1_mem = %x\n", vpe1_mem);
-}
-
-uint32_t vpe1_wdog_ctr;
-static int __init wdog_ctr(char *str)
-{
-        get_option(&str, &vpe1_wdog_ctr);
-        return 1;
-}
-
-__setup("vpe1_wdog_ctr_addr=", wdog_ctr);
-EXPORT_SYMBOL(vpe1_wdog_ctr);
-
-uint32_t vpe1_wdog_timeout;
-static int __init wdog_timeout(char *str)
-{
-        get_option(&str, &vpe1_wdog_timeout);
-        return 1;
-}
-
-__setup("vpe1_wdog_timeout=", wdog_timeout);
-EXPORT_SYMBOL(vpe1_wdog_timeout);
-#endif
-
-#ifdef CONFIG_LTQ_VPE_CACHE_SPLIT /* Code for splitting the cache ways among VPEs. */
-extern int vpe_icache_shared,vpe_dcache_shared;
-extern int icache_way0,icache_way1,icache_way2,icache_way3;
-extern int dcache_way0,dcache_way1,dcache_way2,dcache_way3;
-#endif
-
 /* grab the likely amount of memory we will need. */
 #ifdef CONFIG_MIPS_VPE_LOADER_TOM
 #define P_SIZE (2 * 1024 * 1024)
@@ -141,7 +75,7 @@ extern int dcache_way0,dcache_way1,dcache_way2,dcache_way3;
 /* add an overhead to the max kmalloc size for non-striped symbols/etc */
 #define P_SIZE (256 * 1024)
 #endif
-                                                                                                                                                     
+
 extern unsigned long physical_memsize;
 
 #define MAX_VPES 16
@@ -160,16 +94,6 @@ enum tc_state {
 	TC_STATE_DYNAMIC
 };
 
-enum load_state {
-	LOAD_STATE_EHDR,
-	LOAD_STATE_PHDR,
-	LOAD_STATE_SHDR,
-	LOAD_STATE_PIMAGE,
-	LOAD_STATE_TRAILER,
-	LOAD_STATE_DONE,
-	LOAD_STATE_ERROR
-};
-
 struct vpe {
 	enum vpe_state state;
 
@@ -177,25 +101,10 @@ struct vpe {
 	int minor;
 
 	/* elfloader stuff */
-	unsigned long offset; /* File offset into input stream */
 	void *load_addr;
-	unsigned long copied;
+	unsigned long len;
 	char *pbuffer;
-	unsigned long pbsize;
-	/* Program loading state */
-	enum load_state l_state;
-	Elf_Ehdr *l_ehdr;
-	struct elf_phdr *l_phdr;
-	unsigned int l_phlen;
-	Elf_Shdr *l_shdr;
-	unsigned int l_shlen;
-	int *l_phsort;  /* Sorted index list of program headers */
-	int l_segoff;   /* Offset into current program segment */
-	int l_cur_seg;  /* Indirect index of segment currently being loaded */
-	unsigned int l_progminad;
-	unsigned int l_progmaxad;
-	unsigned int l_trailer;
-
+	unsigned long plen;
 	unsigned int uid, gid;
 	char cwd[VPE_PATH_MAX];
 
@@ -207,11 +116,8 @@ struct vpe {
 	/* The list of vpe's */
 	struct list_head list;
 
-	/* legacy shared symbol address */
+	/* shared symbol address */
 	void *shared_ptr;
-
-	 /* shared area descriptor array address */
-	struct vpe_shared_area *shared_areas;
 
 	/* the list of who wants to know when something major happens */
 	struct list_head notify;
@@ -234,24 +140,13 @@ struct {
 	spinlock_t tc_list_lock;
 	struct list_head tc_list;	/* Thread contexts */
 } vpecontrol = {
-	.vpe_list_lock	= __SPIN_LOCK_UNLOCKED(vpecontrol.vpe_list_lock),
+	.vpe_list_lock	= __SPIN_LOCK_UNLOCKED(vpe_list_lock),
 	.vpe_list	= LIST_HEAD_INIT(vpecontrol.vpe_list),
-	.tc_list_lock	= __SPIN_LOCK_UNLOCKED(vpecontrol.tc_list_lock),
+	.tc_list_lock	= __SPIN_LOCK_UNLOCKED(tc_list_lock),
 	.tc_list	= LIST_HEAD_INIT(vpecontrol.tc_list)
 };
 
 static void release_progmem(void *ptr);
-/*
- * Values and state associated with publishing shared memory areas
- */
-
-#define N_PUB_AREAS 4
-
-static struct vpe_shared_area published_vpe_area[N_PUB_AREAS] = {
-	{VPE_SHARED_RESERVED, 0},
-	{VPE_SHARED_RESERVED, 0},
-	{VPE_SHARED_RESERVED, 0},
-	{VPE_SHARED_RESERVED, 0} };
 
 /* get the vpe associated with this minor */
 static struct vpe *get_vpe(int minor)
@@ -274,7 +169,7 @@ static struct vpe *get_vpe(int minor)
 	return res;
 }
 
-/* get the tc associated with this minor */
+/* get the vpe associated with this minor */
 static struct tc *get_tc(int index)
 {
 	struct tc *res, *t;
@@ -299,8 +194,7 @@ static struct vpe *alloc_vpe(int minor)
 
 	if ((v = kzalloc(sizeof(struct vpe), GFP_KERNEL)) == NULL)
 		return NULL;
-	printk(KERN_DEBUG "Used kzalloc to allocate %d bytes at %x\n",
-		sizeof(struct vpe), (unsigned int)v);
+
 	INIT_LIST_HEAD(&v->tc);
 	spin_lock(&vpecontrol.vpe_list_lock);
 	list_add_tail(&v->list, &vpecontrol.vpe_list);
@@ -319,8 +213,7 @@ static struct tc *alloc_tc(int index)
 
 	if ((tc = kzalloc(sizeof(struct tc), GFP_KERNEL)) == NULL)
 		goto out;
-	printk(KERN_DEBUG "Used kzalloc to allocate %d bytes at %x\n",
-		sizeof(struct tc), (unsigned int)tc);
+
 	INIT_LIST_HEAD(&tc->tc);
 	tc->index = index;
 
@@ -338,11 +231,6 @@ static void release_vpe(struct vpe *v)
 	list_del(&v->list);
 	if (v->load_addr)
 		release_progmem(v);
-	printk(KERN_DEBUG "Used kfree to free memory at %x\n",
-		(unsigned int)v->l_phsort);
-	kfree(v->l_phsort);
-	printk(KERN_DEBUG "Used kfree to free memory at %x\n",
-		(unsigned int)v);
 	kfree(v);
 }
 
@@ -366,88 +254,8 @@ static void __maybe_unused dump_mtregs(void)
 	       val & MVPCONF0_PTC, (val & MVPCONF0_M) >> MVPCONF0_M_SHIFT);
 }
 
-/*
- * The original APRP prototype assumed a single, unshared IRQ for
- * cross-VPE interrupts, used by the RTLX code.  But M3P networking
- * and other future functions may need to share an IRQ, particularly
- * in 34K/Malta configurations without an external interrupt controller.
- * All cross-VPE insterrupt users need to coordinate through shared
- * functions here.
- */
-
-/*
- * It would be nice if I could just have this initialized to zero,
- * but the patchcheck police won't hear of it...
- */
-
-static int xvpe_vector_set;
-
-#define XVPE_INTR_OFFSET 0
-
-static int xvpe_irq = MIPS_CPU_IRQ_BASE + XVPE_INTR_OFFSET;
-
-static void xvpe_dispatch(void)
-{
-	do_IRQ(xvpe_irq);
-}
-
-/* Name here is generic, as m3pnet.c could in principle be used by non-MIPS */
-int arch_get_xcpu_irq()
-{
-	/*
-	 * Some of this will ultimately become platform code,
-	 * but for now, we're only targeting 34K/FPGA/Malta,
-	 * and there's only one generic mechanism.
-	 */
-	if (!xvpe_vector_set) {
-		/*
-		 * A more elaborate shared variable shouldn't be needed.
-		 * Two initializations back-to-back should be harmless.
-		 */
-		if (cpu_has_vint) {
-			set_vi_handler(XVPE_INTR_OFFSET, xvpe_dispatch);
-			xvpe_vector_set = 1;
-		} else {
-			printk(KERN_ERR "APRP requires vectored interrupts\n");
-			return -1;
-		}
-	}
-
-	return xvpe_irq;
-}
-EXPORT_SYMBOL(arch_get_xcpu_irq);
-
-int vpe_send_interrupt(int vpe, int inter)
-{
-	unsigned long flags;
-	unsigned int vpeflags;
-
-	local_irq_save(flags);
-	vpeflags = dvpe();
-
-	/*
-	 * Initial version makes same simple-minded assumption
-	 * as is implicit elsewhere in this module, that the
-	 * only RP of interest is using the first non-Linux TC.
-	 * We ignore the parameters provided by the caller!
-	 */
-	settc(tclimit);
-	/*
-	 * In 34K/Malta, the only cross-VPE interrupts possible
-	 * are done by setting SWINT bits in Cause, of which there
-	 * are two.  SMTC uses SW1 for a multiplexed class of IPIs,
-	 * and this mechanism should be generalized to APRP and use
-	 * the same protocol.  Until that's implemented, send only
-	 * SW0 here, regardless of requested type.
-	 */
-	write_vpe_c0_cause(read_vpe_c0_cause() | C_SW0);
-	evpe(vpeflags);
-	local_irq_restore(flags);
-	return 1;
-}
-EXPORT_SYMBOL(vpe_send_interrupt);
-/* Find some VPE program space  */
-static void *alloc_progmem(void *requested, unsigned long len)
+/* Find some VPE program space	*/
+static void *alloc_progmem(unsigned long len)
 {
 	void *addr;
 
@@ -456,40 +264,11 @@ static void *alloc_progmem(void *requested, unsigned long len)
 	 * This means you must tell Linux to use less memory than you
 	 * physically have, for example by passing a mem= boot argument.
 	 */
-#ifdef CONFIG_LTQ_VPE_EXT
-	if (vpe1_load_addr){
-		//printk ("vpe1_load_addr = 0x%x\n", vpe1_load_addr);
-		return (void *)vpe1_load_addr;
-
-	}
-	else {
-#endif
 	addr = pfn_to_kaddr(max_low_pfn);
-       if (requested != 0) {
-               if (requested >= addr)
-                       addr = requested;
-               else
-                       addr = 0;
-       }
-       if (addr != 0)
-               memset(addr, 0, len);
-       printk(KERN_DEBUG "pfn_to_kaddr returns %lu bytes of memory at %x\n",
-              len, (unsigned int)addr);
-#ifdef CONFIG_LTQ_VPE_EXT
-	}
-#endif
+	memset(addr, 0, len);
 #else
-       if (requested != 0) {
-               /* If we have a target in mind, grab a 2x slice and hope... */
-               addr = kzalloc(len*2, GFP_KERNEL);
-               if ((requested >= addr) && (requested < (addr + len)))
-                       addr = requested;
-               else
-                       addr = 0;
-       } else {
-               /* simply grab some mem for now */
-               addr = kzalloc(len, GFP_KERNEL);
-       }
+	/* simple grab some mem for now */
+	addr = kzalloc(len, GFP_KERNEL);
 #endif
 
 	return addr;
@@ -661,8 +440,6 @@ static int apply_r_mips_hi16(struct module *me, uint32_t *location,
 	 * actual relocation.
 	 */
 	n = kmalloc(sizeof *n, GFP_KERNEL);
-	printk(KERN_DEBUG "Used kmalloc to allocate %d bytes at %x\n",
-	       sizeof(struct mips_hi16), (unsigned int)n);
 	if (!n)
 		return -ENOMEM;
 
@@ -720,8 +497,6 @@ static int apply_r_mips_lo16(struct module *me, uint32_t *location,
 			*l->addr = insn;
 
 			next = l->next;
-			printk(KERN_DEBUG "Used kfree to free memory at %x\n",
-			       (unsigned int)l);
 			kfree(l);
 			l = next;
 		}
@@ -815,7 +590,7 @@ static int apply_relocations(Elf32_Shdr *sechdrs,
 	return 0;
 }
 
-void save_gp_address(unsigned int secbase, unsigned int rel)
+static inline void save_gp_address(unsigned int secbase, unsigned int rel)
 {
 	gp_addr = secbase + rel;
 	gp_offs = gp_addr - (secbase & 0xffff0000);
@@ -922,18 +697,7 @@ static int vpe_run(struct vpe * v)
 	dmt_flag = dmt();
 	vpeflags = dvpe();
 
-	if (!list_empty(&v->tc)) {
-		if ((t = list_entry(v->tc.next, struct tc, tc)) == NULL) {
-			evpe(vpeflags);
-			emt(dmt_flag);
-			local_irq_restore(flags);
-
-			printk(KERN_WARNING
-			       "VPE loader: TC %d is already in use.\n",
-			       t->index);
-			return -ENOEXEC;
-		}
-	} else {
+	if (list_empty(&v->tc)) {
 		evpe(vpeflags);
 		emt(dmt_flag);
 		local_irq_restore(flags);
@@ -944,6 +708,8 @@ static int vpe_run(struct vpe * v)
 
 		return -ENOEXEC;
 	}
+
+	t = list_first_entry(&v->tc, struct tc, tc);
 
 	/* Put MVPE's into 'configuration state' */
 	set_c0_mvpcontrol(MVPCONTROL_VPC);
@@ -962,7 +728,6 @@ static int vpe_run(struct vpe * v)
 		return -ENOEXEC;
 	}
 
-
 	/* Write the address we want it to start running from in the TCPC register. */
 	write_tc_c0_tcrestart((unsigned long)v->__start);
 	write_tc_c0_tccontext((unsigned long)0);
@@ -976,22 +741,7 @@ static int vpe_run(struct vpe * v)
 	write_tc_c0_tcstatus(val);
 
 	write_tc_c0_tchalt(read_tc_c0_tchalt() & ~TCHALT_H);
-	mips_ihb();
 
-#ifdef CONFIG_LTQ_VPE_EXT
-       /*
-        * $a2 & $a3 are used to pass command line parameters to VPE1. $a2
-        * points to the start of the command line string and $a3 points to
-        * the end of the string. This convention is identical to the Linux
-        * kernel boot parameter passing mechanism. Please note that $a3 is
-        * used to pass physical memory size or 0 in SDE tool kit. So, if you
-        * are passing comand line parameters through $a2 & $a3 SDE programs
-        * don't work as desired.
-        */
-       mttgpr(6, command_line);
-       mttgpr(7, (command_line + strlen(command_line)));
-       if (is_sdepgm) {
-#endif
 	/*
 	 * The sde-kit passes 'memsize' to __start in $a3, so set something
 	 * here...  Or set $a3 to zero and define DFLT_STACK_SIZE and
@@ -999,9 +749,7 @@ static int vpe_run(struct vpe * v)
 	 */
 	mttgpr(6, v->ntcs);
 	mttgpr(7, physical_memsize);
-#ifdef CONFIG_LTQ_VPE_EXT
-	}
-#endif
+
 	/* set up VPE1 */
 	/*
 	 * bind the TC to VPE 1 as late as possible so we only have the final
@@ -1019,76 +767,8 @@ static int vpe_run(struct vpe * v)
 
 	back_to_back_c0_hazard();
 
-#ifdef CONFIG_LTQ_VPE_EXT
-       settc(t->index);
-
-       if (stlb)
-               write_vpe_c0_wired(vpe0_wired + vpe1_wired);
-       else
-               write_vpe_c0_wired(vpe1_wired);
-#endif
 	/* enable this VPE */
 	write_vpe_c0_vpeconf0(read_vpe_c0_vpeconf0() | VPECONF0_VPA);
-
-#ifdef CONFIG_LTQ_VPE_CACHE_SPLIT
-	if ( (!vpe_icache_shared) || (!vpe_dcache_shared) ) {
-
-		/* PCP bit must be 1 to split the cache */
-		if(read_c0_mvpconf0() & MVPCONF0_PCP) {
-
-			if ( !vpe_icache_shared ){
-				write_vpe_c0_vpeconf0((read_vpe_c0_vpeconf0()) & ~VPECONF0_ICS);
-
-				/*
-				* If any cache way is 1, then that way is denied
-				* in VPE1. Otherwise assign that way to VPE1.
-				*/
-				if (!icache_way0)
-					write_vpe_c0_vpeopt(read_vpe_c0_vpeopt() | VPEOPT_IWX0 );
-				else
-					write_vpe_c0_vpeopt(read_vpe_c0_vpeopt() & ~VPEOPT_IWX0 );
-				if (!icache_way1)
-					write_vpe_c0_vpeopt(read_vpe_c0_vpeopt() | VPEOPT_IWX1 );
-				else
-					write_vpe_c0_vpeopt(read_vpe_c0_vpeopt() & ~VPEOPT_IWX1 );
-				if (!icache_way2)
-					write_vpe_c0_vpeopt(read_vpe_c0_vpeopt() | VPEOPT_IWX2 );
-				else
-					write_vpe_c0_vpeopt(read_vpe_c0_vpeopt() & ~VPEOPT_IWX2 );
-				if (!icache_way3)
-					write_vpe_c0_vpeopt(read_vpe_c0_vpeopt() | VPEOPT_IWX3 );
-				else
-					write_vpe_c0_vpeopt(read_vpe_c0_vpeopt() & ~VPEOPT_IWX3 );
-			}
-
-			if ( !vpe_dcache_shared ) {
-				write_vpe_c0_vpeconf0((read_vpe_c0_vpeconf0()) & ~VPECONF0_DCS);
-
-				/*
-				* If any cache way is 1, then that way is denied
-				* in VPE1. Otherwise assign that way to VPE1.
-				*/
-				if (!dcache_way0)
-					write_vpe_c0_vpeopt(read_vpe_c0_vpeopt() | VPEOPT_DWX0 );
-				else
-					write_vpe_c0_vpeopt(read_vpe_c0_vpeopt() & ~VPEOPT_DWX0 );
-				if (!dcache_way1)
-					write_vpe_c0_vpeopt(read_vpe_c0_vpeopt() | VPEOPT_DWX1 );
-				else
-					write_vpe_c0_vpeopt(read_vpe_c0_vpeopt() & ~VPEOPT_DWX1 );
-				if (!dcache_way2)
-					write_vpe_c0_vpeopt(read_vpe_c0_vpeopt() | VPEOPT_DWX2 );
-				else
-					write_vpe_c0_vpeopt(read_vpe_c0_vpeopt() & ~VPEOPT_DWX2 );
-				if (!dcache_way3)
-					write_vpe_c0_vpeopt(read_vpe_c0_vpeopt() | VPEOPT_DWX3 );
-				else
-					write_vpe_c0_vpeopt(read_vpe_c0_vpeopt() & ~VPEOPT_DWX3 );
-			}
-		}
-	}
-
-#endif /* endif CONFIG_LTQ_VPE_CACHE_SPLIT */
 
 	/* clear out any left overs from a previous program */
 	write_vpe_c0_status(0);
@@ -1121,49 +801,20 @@ static int find_vpe_symbols(struct vpe * v, Elf_Shdr * sechdrs,
 				      struct module *mod)
 {
 	Elf_Sym *sym = (void *)sechdrs[symindex].sh_addr;
-	unsigned int i, j, n = sechdrs[symindex].sh_size / sizeof(Elf_Sym);
+	unsigned int i, n = sechdrs[symindex].sh_size / sizeof(Elf_Sym);
 
 	for (i = 1; i < n; i++) {
-	    if (strcmp(strtab + sym[i].st_name, "__start") == 0)
-		v->__start = sym[i].st_value;
-
-	    if (strcmp(strtab + sym[i].st_name, "vpe_shared") == 0)
-		v->shared_ptr = (void *)sym[i].st_value;
-
-	    if (strcmp(strtab + sym[i].st_name, "_vpe_shared_areas") == 0) {
-		struct vpe_shared_area *psa
-		    = (struct vpe_shared_area *)sym[i].st_value;
-		struct vpe_shared_area *tpsa;
-		v->shared_areas = psa;
-		printk(KERN_INFO"_vpe_shared_areas found, 0x%x\n",
-		    (unsigned int)v->shared_areas);
-		/*
-		 * Copy any "published" areas to the descriptor
-		 */
-		for (j = 0; j < N_PUB_AREAS; j++) {
-		    if (published_vpe_area[j].type != VPE_SHARED_RESERVED) {
-			tpsa = psa;
-			while (tpsa->type != VPE_SHARED_NULL) {
-			    if ((tpsa->type == VPE_SHARED_RESERVED)
-			    || (tpsa->type == published_vpe_area[j].type)) {
-				tpsa->type = published_vpe_area[j].type;
-				tpsa->addr = published_vpe_area[j].addr;
-				break;
-			    }
-			    tpsa++;
-			}
-		    }
+		if (strcmp(strtab + sym[i].st_name, "__start") == 0) {
+			v->__start = sym[i].st_value;
 		}
-	    }
 
+		if (strcmp(strtab + sym[i].st_name, "vpe_shared") == 0) {
+			v->shared_ptr = (void *)sym[i].st_value;
+		}
 	}
 
 	if ( (v->__start == 0) || (v->shared_ptr == NULL))
 		return -1;
-
-#ifdef CONFIG_LTQ_VPE_EXT
-       is_sdepgm = 1;
-#endif
 
 	return 0;
 }
@@ -1181,16 +832,17 @@ static int vpe_elfload(struct vpe * v)
 	char *secstrings, *strtab = NULL;
 	unsigned int len, i, symindex = 0, strindex = 0, relocate = 0;
 	struct module mod;	// so we can re-use the relocations code
-	mm_segment_t old_fs;
 
 	memset(&mod, 0, sizeof(struct module));
 	strcpy(mod.name, "VPE loader");
-	hdr = v->l_ehdr;
-	len = v->pbsize;
+
+	hdr = (Elf_Ehdr *) v->pbuffer;
+	len = v->plen;
 
 	/* Sanity checks against insmoding binaries or wrong arch,
 	   weird elf version */
-	if ((hdr->e_type != ET_REL && hdr->e_type != ET_EXEC)
+	if (memcmp(hdr->e_ident, ELFMAG, SELFMAG) != 0
+	    || (hdr->e_type != ET_REL && hdr->e_type != ET_EXEC)
 	    || !elf_check_arch(hdr)
 	    || hdr->e_shentsize != sizeof(*sechdrs)) {
 		printk(KERN_WARNING
@@ -1202,8 +854,9 @@ static int vpe_elfload(struct vpe * v)
 	if (hdr->e_type == ET_REL)
 		relocate = 1;
 
-	if (len < v->l_phlen + v->l_shlen) {
-		printk(KERN_ERR "VPE loader: Headers exceed %u bytes\n", len);
+	if (len < hdr->e_shoff + hdr->e_shnum * sizeof(Elf_Shdr)) {
+		printk(KERN_ERR "VPE loader: program length %u truncated\n",
+		       len);
 
 		return -ENOEXEC;
 	}
@@ -1237,13 +890,9 @@ static int vpe_elfload(struct vpe * v)
 			}
 		}
 		layout_sections(&mod, hdr, sechdrs, secstrings);
-		/*
-		 * Non-relocatable loads should have already done their
-		 * allocates, based on program header table.
-		 */
 	}
 
-	memset(v->load_addr, 0, mod.core_size);
+	v->load_addr = alloc_progmem(mod.core_size);
 	if (!v->load_addr)
 		return -ENOMEM;
 
@@ -1309,9 +958,6 @@ static int vpe_elfload(struct vpe * v)
 		    phdr++;
 		}
 
-		/*
-		 * Program image is already in memory.
-		 */
 		for (i = 0; i < hdr->e_shnum; i++) {
 			/* Internal symbols and strings. */
 			if (sechdrs[i].sh_type == SHT_SYMTAB) {
@@ -1327,24 +973,10 @@ static int vpe_elfload(struct vpe * v)
 	}
 
 	/* make sure it's physically written out */
-	/* flush the icache in correct context */
-	old_fs = get_fs();
-	set_fs(KERNEL_DS);
 	flush_icache_range((unsigned long)v->load_addr,
-			   (unsigned long)v->load_addr + v->copied);
-	set_fs(old_fs);
+			   (unsigned long)v->load_addr + v->len);
 
-	//printk ("outside findvpesym vpe1_load_addr = %x\n", vpe1_load_addr);
 	if ((find_vpe_symbols(v, sechdrs, symindex, strtab, &mod)) < 0) {
-#ifdef CONFIG_LTQ_VPE_EXT
-               if (vpe1_load_addr) {
-			//printk ("inside findvpesym vpe1_load_addr = %x", vpe1_load_addr);
-                       /* Conversion to KSEG1 is required ??? */
-                       v->__start = KSEG1ADDR(vpe1_load_addr);
-                       is_sdepgm = 0;
-                       return 0;
-               }
-#endif
 		if (v->__start == 0) {
 			printk(KERN_WARNING "VPE loader: program does not contain "
 			       "a __start symbol\n");
@@ -1356,8 +988,8 @@ static int vpe_elfload(struct vpe * v)
 			       "program does not contain vpe_shared symbol.\n"
 			       " Unable to use AMVP (AP/SP) facilities.\n");
 	}
-	pr_info("APRP VPE loader: elf loaded\n");
 
+	printk(" elf loaded\n");
 	return 0;
 }
 
@@ -1415,19 +1047,13 @@ static int vpe_open(struct inode *inode, struct file *filp)
 	struct vpe_notifications *not;
 	struct vpe *v;
 	int ret;
-#ifdef CONFIG_LTQ_VPE_EXT
-	int progsize;
-#endif
+
 	if (minor != iminor(inode)) {
 		/* assume only 1 device at the moment. */
 		pr_warning("VPE loader: only vpe1 is supported\n");
 
 		return -ENODEV;
 	}
-	/*
-	 * This treats the tclimit command line configuration input
-	 * as a minor device indication, which is probably unwholesome.
-	 */
 
 	if ((v = get_vpe(tclimit)) == NULL) {
 		pr_warning("VPE loader: unable to get vpe\n");
@@ -1444,43 +1070,21 @@ static int vpe_open(struct inode *inode, struct file *filp)
 		}
 
 		release_progmem(v->load_addr);
-		kfree(v->l_phsort);
 		cleanup_tc(get_tc(tclimit));
 	}
 
-#ifdef CONFIG_LTQ_VPE_EXT
-       progsize = (vpe1_mem  != 0) ? vpe1_mem : P_SIZE;
-       v->pbuffer = vmalloc(progsize);
-	if (!v->pbuffer) {
-		pr_warning("VPE loader: unable to allocate memory\n");
-		return -ENOMEM;
-	}
-       v->pbsize = progsize;
-#else
 	/* this of-course trashes what was there before... */
 	v->pbuffer = vmalloc(P_SIZE);
 	if (!v->pbuffer) {
 		pr_warning("VPE loader: unable to allocate memory\n");
 		return -ENOMEM;
 	}
-	v->pbsize = P_SIZE;
-#endif
+	v->plen = P_SIZE;
 	v->load_addr = NULL;
-	v->copied = 0;
-	v->offset = 0;
-	v->l_state = LOAD_STATE_EHDR;
-	v->l_ehdr = NULL;
-	v->l_phdr = NULL;
-	v->l_phsort = NULL;
-	v->l_shdr = NULL;
+	v->len = 0;
 
-#ifdef CONFIG_UIDGID_STRICT_TYPE_CHECKS
-	v->uid = filp->f_cred->fsuid.val;
-	v->gid = filp->f_cred->fsgid.val;
-#else
 	v->uid = filp->f_cred->fsuid;
 	v->gid = filp->f_cred->fsgid;
-#endif
 
 	v->cwd[0] = 0;
 	ret = getcwd(v->cwd, VPE_PATH_MAX);
@@ -1488,7 +1092,6 @@ static int vpe_open(struct inode *inode, struct file *filp)
 		printk(KERN_WARNING "VPE loader: open, getcwd returned %d\n", ret);
 
 	v->shared_ptr = NULL;
-	v->shared_areas = NULL;
 	v->__start = 0;
 
 	return 0;
@@ -1497,30 +1100,18 @@ static int vpe_open(struct inode *inode, struct file *filp)
 static int vpe_release(struct inode *inode, struct file *filp)
 {
 	struct vpe *v;
+	Elf_Ehdr *hdr;
 	int ret = 0;
 
 	v = get_vpe(tclimit);
 	if (v == NULL)
 		return -ENODEV;
-	/*
-	 * If image load had no errors, massage program/section tables
-	 * to reflect movement of program/section data into VPE program
-	 * memory.
-	 */
-	if (v->l_state != LOAD_STATE_DONE) {
-		printk(KERN_WARNING "VPE Release after incomplete load\n");
-		printk(KERN_DEBUG "Used vfree to free memory at "
-				  "%x after failed load attempt\n",
-		       (unsigned int)v->pbuffer);
-		if (v->pbuffer != NULL)
-			vfree(v->pbuffer);
-		return -ENOEXEC;
-	}
 
-	if (memcmp(((Elf_Ehdr *)v->pbuffer)->e_ident, ELFMAG, SELFMAG) == 0) {
-		if (vpe_elfload(v) >= 0)
+	hdr = (Elf_Ehdr *) v->pbuffer;
+	if (memcmp(hdr->e_ident, ELFMAG, SELFMAG) == 0) {
+		if (vpe_elfload(v) >= 0) {
 			vpe_run(v);
-		else {
+		} else {
 			printk(KERN_WARNING "VPE loader: ELF load failed.\n");
 			ret = -ENOEXEC;
 		}
@@ -1528,7 +1119,6 @@ static int vpe_release(struct inode *inode, struct file *filp)
 		printk(KERN_WARNING "VPE loader: only elf files are supported\n");
 		ret = -ENOEXEC;
 	}
-
 
 	/* It's good to be able to run the SP and if it chokes have a look at
 	   the /dev/rt?. But if we reset the pointer to the shared struct we
@@ -1538,427 +1128,36 @@ static int vpe_release(struct inode *inode, struct file *filp)
 	if (ret < 0)
 		v->shared_ptr = NULL;
 
-	// cleanup any temp buffers
-	if (v->pbuffer) {
-		printk(KERN_DEBUG "Used vfree to free memory at %x\n",
-		       (unsigned int)v->pbuffer);
-		vfree(v->pbuffer);
-	}
-	v->pbsize = 0;
+	vfree(v->pbuffer);
+	v->plen = 0;
+
 	return ret;
 }
 
-/*
- * A sort of insertion sort to generate list of program header indices
- * in order of their file offsets.
- */
-
-static void indexort(struct elf_phdr *phdr, int nph, int *index)
-{
-	int i, j, t;
-	unsigned int toff;
-
-	/* Create initial mapping */
-	for (i = 0; i < nph; i++)
-		index[i] = i;
-	/* Do the indexed insert sort */
-	for (i = 1; i < nph; i++) {
-		j = i;
-		t = index[j];
-		toff = phdr[t].p_offset;
-		while ((j > 0) && (phdr[index[j-1]].p_offset > toff)) {
-			index[j] = index[j-1];
-			j--;
-		}
-		index[j] = t;
-	}
-}
-
-
-/*
- * This function has to convert the ELF file image being sequentially
- * streamed to the pseudo-device into the binary image, symbol, and
- * string information, which the ELF format allows to be in some degree
- * of disorder.
- *
- * The ELF header and, if present, program header table, are copied into
- * a temporary buffer.  Loadable program segments, if present, are copied
- * into the RP program memory at the addresses specified by the program
- * header table.
- *
- * Sections not specified by the program header table are loaded into
- * memory following the program segments if they are "allocated", or
- * into the temporary buffer if they are not. The section header
- * table is loaded into the temporary buffer.???
- */
-#define CURPHDR (v->l_phdr[v->l_phsort[v->l_cur_seg]])
 static ssize_t vpe_write(struct file *file, const char __user * buffer,
 			 size_t count, loff_t * ppos)
 {
 	size_t ret = count;
 	struct vpe *v;
-	int tocopy, uncopied;
-	int i;
-	unsigned int progmemlen;
 
-	if (iminor(file->f_path.dentry->d_inode) != minor)
+	if (iminor(file_inode(file)) != minor)
 		return -ENODEV;
 
 	v = get_vpe(tclimit);
 	if (v == NULL)
 		return -ENODEV;
 
-	if (v->pbuffer == NULL) {
-		printk(KERN_ERR "VPE loader: no buffer for program\n");
+	if ((count + v->len) > v->plen) {
+		printk(KERN_WARNING
+		       "VPE loader: elf size too big. Perhaps strip uneeded symbols\n");
 		return -ENOMEM;
 	}
 
-	while (count) {
-		switch (v->l_state) {
-		case LOAD_STATE_EHDR:
-			/* Loading ELF Header into scratch buffer */
-			tocopy = min((unsigned long)count,
-				     sizeof(Elf_Ehdr) - v->offset);
-			uncopied = copy_from_user(v->pbuffer + v->copied,
-						  buffer, tocopy);
-			count -= tocopy - uncopied;
-			v->copied += tocopy - uncopied;
-			v->offset += tocopy - uncopied;
-			buffer += tocopy - uncopied;
-			if (v->copied == sizeof(Elf_Ehdr)) {
-			    v->l_ehdr = (Elf_Ehdr *)v->pbuffer;
-			    if (memcmp(v->l_ehdr->e_ident, ELFMAG, 4) != 0) {
-				printk(KERN_WARNING "VPE loader: %s\n",
-					"non-ELF file image");
-				ret = -ENOEXEC;
-				v->l_state = LOAD_STATE_ERROR;
-				break;
-			    }
-			    if (v->l_ehdr->e_phoff != 0) {
-				v->l_phdr = (struct elf_phdr *)
-					(v->pbuffer + v->l_ehdr->e_phoff);
-				v->l_phlen = v->l_ehdr->e_phentsize
-					* v->l_ehdr->e_phnum;
-				/* Check against buffer overflow */
-				if ((v->copied + v->l_phlen) > v->pbsize) {
-					printk(KERN_WARNING
-		       "VPE loader: elf program header table size too big\n");
-					v->l_state = LOAD_STATE_ERROR;
-					return -ENOMEM;
-				}
-				v->l_state = LOAD_STATE_PHDR;
-				/*
-				 * Program headers generally indicate
-				 * linked executable with possibly
-				 * valid entry point.
-				 */
-				v->__start = v->l_ehdr->e_entry;
-			    } else  if (v->l_ehdr->e_shoff != 0) {
-				/*
-				 * No program headers, but a section
-				 * header table.  A relocatable binary.
-				 * We need to load the works into the
-				 * kernel temp buffer to compute the
-				 * RP program image.  That limits our
-				 * binary size, but at least we're no
-				 * worse off than the original APRP
-				 * prototype.
-				 */
-				v->l_shlen = v->l_ehdr->e_shentsize
-					* v->l_ehdr->e_shnum;
-				if ((v->l_ehdr->e_shoff + v->l_shlen
-				     - v->offset) > v->pbsize) {
-					printk(KERN_WARNING
-			 "VPE loader: elf sections/section table too big.\n");
-					v->l_state = LOAD_STATE_ERROR;
-					return -ENOMEM;
-				}
-				v->l_state = LOAD_STATE_SHDR;
-			    } else {
-				/*
-				 * If neither program nor section tables,
-				 * we don't know what to do.
-				 */
-				v->l_state = LOAD_STATE_ERROR;
-				return -ENOEXEC;
-			    }
-			}
-			break;
-		case LOAD_STATE_PHDR:
-			/* Loading Program Headers into scratch */
-			tocopy = min((unsigned long)count,
-			    v->l_ehdr->e_phoff + v->l_phlen - v->copied);
-			uncopied = copy_from_user(v->pbuffer + v->copied,
-			    buffer, tocopy);
-			count -= tocopy - uncopied;
-			v->copied += tocopy - uncopied;
-			v->offset += tocopy - uncopied;
-			buffer += tocopy - uncopied;
+	count -= copy_from_user(v->pbuffer + v->len, buffer, count);
+	if (!count)
+		return -EFAULT;
 
-			if (v->copied == v->l_ehdr->e_phoff + v->l_phlen) {
-			    /*
-			     * It's legal for the program headers to be
-			     * out of order with respect to the file layout.
-			     * Generate a list of indices, sorted by file
-			     * offset.
-			     */
-			    v->l_phsort = kmalloc(v->l_ehdr->e_phnum
-				* sizeof(int), GFP_KERNEL);
-			    printk(KERN_DEBUG
-		   "Used kmalloc to allocate %d bytes of memory at %x\n",
-				   v->l_ehdr->e_phnum*sizeof(int),
-				   (unsigned int)v->l_phsort);
-			    if (!v->l_phsort)
-				    return -ENOMEM; /* Preposterous, but... */
-			    indexort(v->l_phdr, v->l_ehdr->e_phnum,
-				     v->l_phsort);
-
-			    v->l_progminad = (unsigned int)-1;
-			    v->l_progmaxad = 0;
-			    progmemlen = 0;
-			    for (i = 0; i < v->l_ehdr->e_phnum; i++) {
-				if (v->l_phdr[v->l_phsort[i]].p_type
-				    == PT_LOAD) {
-				    /* Unstripped .reginfo sections are bad */
-				    if (v->l_phdr[v->l_phsort[i]].p_vaddr
-					< __UA_LIMIT) {
-					printk(KERN_WARNING "%s%s%s\n",
-					    "VPE loader: ",
-					    "User-mode p_vaddr, ",
-					    "skipping program segment,");
-					printk(KERN_WARNING "%s%s%s\n",
-					    "VPE loader: ",
-					    "strip .reginfo from binary ",
-					    "if necessary.");
-					continue;
-				    }
-				    if (v->l_phdr[v->l_phsort[i]].p_vaddr
-					< v->l_progminad)
-					    v->l_progminad =
-					      v->l_phdr[v->l_phsort[i]].p_vaddr;
-				    if ((v->l_phdr[v->l_phsort[i]].p_vaddr
-					+ v->l_phdr[v->l_phsort[i]].p_memsz)
-					> v->l_progmaxad)
-					    v->l_progmaxad =
-					     v->l_phdr[v->l_phsort[i]].p_vaddr +
-					     v->l_phdr[v->l_phsort[i]].p_memsz;
-				}
-			    }
-			    printk(KERN_INFO "APRP RP program 0x%x to 0x%x\n",
-				v->l_progminad, v->l_progmaxad);
-			    /*
-			     * Do a simple sanity check of the memory being
-			     * allocated. Abort if greater than an arbitrary
-			     * value of 32MB
-			     */
-			    if (v->l_progmaxad - v->l_progminad >
-				32*1024*1024) {
-				printk(KERN_WARNING
-	      "RP program failed to allocate %d kbytes - limit is 32,768 KB\n",
-				       (v->l_progmaxad - v->l_progminad)/1024);
-				return -ENOMEM;
-			      }
-
-			    v->load_addr = alloc_progmem((void *)v->l_progminad,
-				v->l_progmaxad - v->l_progminad);
-			    if (!v->load_addr)
-				return -ENOMEM;
-			    if ((unsigned int)v->load_addr
-				> v->l_progminad) {
-				release_progmem(v->load_addr);
-				return -ENOMEM;
-			    }
-			    /* Find first segment with loadable content */
-			    for (i = 0; i < v->l_ehdr->e_phnum; i++) {
-				if (v->l_phdr[v->l_phsort[i]].p_type
-				    == PT_LOAD) {
-				    if (v->l_phdr[v->l_phsort[i]].p_vaddr
-					< __UA_LIMIT) {
-					/* Skip userspace segments */
-					continue;
-				    }
-				    v->l_cur_seg = i;
-				    break;
-				}
-			    }
-			    if (i == v->l_ehdr->e_phnum) {
-				/* No loadable program segment?  Bogus file. */
-				printk(KERN_WARNING "Bad ELF file for APRP\n");
-				return -ENOEXEC;
-			    }
-			    v->l_segoff = 0;
-			    v->l_state = LOAD_STATE_PIMAGE;
-			}
-			break;
-		case LOAD_STATE_PIMAGE:
-			/*
-			 * Skip through input stream until
-			 * first program segment. Would be
-			 * better to have loaded up to here
-			 * into the temp buffer, but for now
-			 * we simply rule out "interesting"
-			 * sections prior to the last program
-			 * segment in an executable file.
-			 */
-			if (v->offset < CURPHDR.p_offset) {
-			    uncopied = CURPHDR.p_offset - v->offset;
-			    if (uncopied > count)
-				uncopied = count;
-			    count -= uncopied;
-			    buffer += uncopied;
-			    v->offset += uncopied;
-			    /* Go back through the "while" */
-			    break;
-			}
-			/*
-			 * Having dispensed with any unlikely fluff,
-			 * copy from user I/O buffer to program segment.
-			 */
-			tocopy = min(count, CURPHDR.p_filesz - v->l_segoff);
-
-			/* Loading image into RP memory */
-			uncopied = copy_from_user((char *)CURPHDR.p_vaddr
-			    + v->l_segoff, buffer, tocopy);
-			count -= tocopy - uncopied;
-			v->offset += tocopy - uncopied;
-			v->l_segoff += tocopy - uncopied;
-			buffer += tocopy - uncopied;
-			if (v->l_segoff >= CURPHDR.p_filesz) {
-			    /* Finished current segment load */
-			    /* Zero out non-file-sourced image */
-			    uncopied = CURPHDR.p_memsz - CURPHDR.p_filesz;
-			    if (uncopied > 0)
-				memset((char *)CURPHDR.p_vaddr + v->l_segoff,
-				    0, uncopied);
-			    /* Advance to next segment */
-			    for (i = v->l_cur_seg + 1;
-				i < v->l_ehdr->e_phnum; i++) {
-				if (v->l_phdr[v->l_phsort[i]].p_type
-				    == PT_LOAD) {
-				    if (v->l_phdr[v->l_phsort[i]].p_vaddr
-					< __UA_LIMIT) {
-					/* Skip userspace segments */
-					continue;
-				    }
-				    v->l_cur_seg = i;
-				    break;
-				}
-			    }
-			    /* If none left, prepare to load section headers */
-			    if (i == v->l_ehdr->e_phnum) {
-				if (v->l_ehdr->e_shoff != 0) {
-				/* Copy to where we left off in temp buffer */
-				    v->l_shlen = v->l_ehdr->e_shentsize
-					* v->l_ehdr->e_shnum;
-				    if ((v->l_ehdr->e_shoff + v->l_shlen
-					- v->offset) > v->pbsize) {
-					printk(KERN_WARNING
-			   "VPE loader: elf sections/section table too big\n");
-					v->l_state = LOAD_STATE_ERROR;
-					return -ENOMEM;
-				    }
-				    v->l_state = LOAD_STATE_SHDR;
-				    break;
-				}
-			    } else {
-				/* reset offset for new program segment */
-				v->l_segoff = 0;
-			    }
-			}
-			break;
-		case LOAD_STATE_SHDR:
-			/*
-			 * Read stream into private buffer up
-			 * through and including the section header
-			 * table.
-			 */
-
-			tocopy = min((unsigned long)count,
-			    v->l_ehdr->e_shoff + v->l_shlen - v->offset);
-			if (tocopy) {
-			    uncopied = copy_from_user(v->pbuffer + v->copied,
-			    buffer, tocopy);
-			    count -= tocopy - uncopied;
-			    v->copied += tocopy - uncopied;
-			    v->offset += tocopy - uncopied;
-			    buffer += tocopy - uncopied;
-			}
-			/* Finished? */
-			if (v->offset == v->l_ehdr->e_shoff + v->l_shlen) {
-			    unsigned int offset_delta = v->offset - v->copied;
-
-			    v->l_shdr = (Elf_Shdr *)(v->pbuffer
-				+ v->l_ehdr->e_shoff - offset_delta);
-			    /*
-			     * Check for sections after the section table,
-			     * which for gcc MIPS binaries includes
-			     * the symbol table. Do any other processing
-			     * that requires value within stream, and
-			     * normalize offsets to be relative to
-			     * the header-only layout of temp buffer.
-			     */
-
-			    /* Assume no trailer until we detect one */
-			    v->l_trailer = 0;
-			    v->l_state = LOAD_STATE_DONE;
-			    for (i = 0; i < v->l_ehdr->e_shnum; i++) {
-				   if (v->l_shdr[i].sh_offset
-					> v->l_ehdr->e_shoff) {
-					v->l_state = LOAD_STATE_TRAILER;
-					/* Track trailing data length */
-					if (v->l_trailer
-					    < (v->l_shdr[i].sh_offset
-					    + v->l_shdr[i].sh_size)
-					    - (v->l_ehdr->e_shoff
-					    + v->l_shlen))
-						v->l_trailer =
-						    (v->l_shdr[i].sh_offset
-						    + v->l_shdr[i].sh_size)
-						    - (v->l_ehdr->e_shoff
-						    + v->l_shlen);
-				    }
-				    /* Adjust section offset if necessary */
-				    v->l_shdr[i].sh_offset -= offset_delta;
-			    }
-			    if ((v->copied + v->l_trailer) > v->pbsize) {
-				printk(KERN_WARNING
-	      "VPE loader: elf size too big. Perhaps strip uneeded symbols\n");
-				v->l_state = LOAD_STATE_ERROR;
-				return -ENOMEM;
-			    }
-
-			    /* Fix up offsets in ELF header */
-			    v->l_ehdr->e_shoff = (unsigned int)v->l_shdr
-				- (unsigned int)v->pbuffer;
-			}
-			break;
-		case LOAD_STATE_TRAILER:
-			/*
-			 * Symbol and string tables follow section headers
-			 * in gcc binaries for MIPS. Copy into temp buffer.
-			 */
-			if (v->l_trailer) {
-			    tocopy = min(count, v->l_trailer);
-			    uncopied = copy_from_user(v->pbuffer + v->copied,
-			    buffer, tocopy);
-			    count -= tocopy - uncopied;
-			    v->l_trailer -= tocopy - uncopied;
-			    v->copied += tocopy - uncopied;
-			    v->offset += tocopy - uncopied;
-			    buffer += tocopy - uncopied;
-			}
-			if (!v->l_trailer)
-			    v->l_state = LOAD_STATE_DONE;
-			break;
-		case LOAD_STATE_DONE:
-			if (count)
-				count = 0;
-			break;
-		case LOAD_STATE_ERROR:
-		default:
-			return -EINVAL;
-		}
-	}
+	v->len += count;
 	return ret;
 }
 
@@ -1994,9 +1193,7 @@ int vpe_start(vpe_handle vpe, unsigned long start)
 {
 	struct vpe *v = vpe;
 
-	/* Null start address means use value from ELF file */
-	if (start)
-		v->__start = start;
+	v->__start = start;
 	return vpe_run(v);
 }
 
@@ -2044,9 +1241,6 @@ int vpe_free(vpe_handle vpe)
 	write_vpe_c0_vpeconf0(read_vpe_c0_vpeconf0() & ~VPECONF0_VPA);
 
 	/* halt the TC */
-#ifdef CONFIG_LTQ_VPE_EXT
-	write_tc_c0_tcstatus(read_tc_c0_tcstatus() & ~TCSTATUS_A);
-#endif
 	write_tc_c0_tchalt(TCHALT_H);
 	mips_ihb();
 
@@ -2124,234 +1318,6 @@ char *vpe_getcwd(int index)
 
 EXPORT_SYMBOL(vpe_getcwd);
 
-#ifdef CONFIG_LTQ_VPE_EXT
-int32_t vpe1_sw_start(void* sw_start_addr, uint32_t tcmask, uint32_t flags)
-{
-       enum vpe_state state;
-        struct vpe *v = get_vpe(tclimit);
-       struct vpe_notifications *not;
-
-        if (tcmask || flags) {
-               printk(KERN_WARNING "Currently tcmask and flags should be 0."
-                               "other values not supported\n");
-               return -1;
-        }
-
-        state = xchg(&v->state, VPE_STATE_INUSE);
-        if (state != VPE_STATE_UNUSED) {
-               vpe_stop(v);
-
-               list_for_each_entry(not, &v->notify, list) {
-                        not->stop(tclimit);
-               }
-        }
-
-        v->__start = (unsigned long)sw_start_addr;
-       is_sdepgm = 0;
-
-        if (!vpe_run(v)) {
-               printk(KERN_DEBUG "VPE loader: VPE1 running successfully\n");
-                return 0;
-       }
-       return -1;
-}
-
-EXPORT_SYMBOL(vpe1_sw_start);
-
-int32_t vpe1_sw_stop(uint32_t flags)
-{
-	struct vpe *v = get_vpe(tclimit);
-
-        if (!vpe_free(v)) {
-               printk(KERN_DEBUG "RP Stopped\n");
-               return 0;
-       }
-        else
-        	return -1;
-}
-
-EXPORT_SYMBOL(vpe1_sw_stop);
-
-uint32_t vpe1_get_load_addr (uint32_t flags)
-{
-       return vpe1_load_addr;
-}
-
-EXPORT_SYMBOL(vpe1_get_load_addr);
-
-uint32_t vpe1_get_max_mem (uint32_t flags)
-{
-       if (!vpe1_mem)
-               return P_SIZE;
-       else
-               return vpe1_mem;
-}
-
-EXPORT_SYMBOL(vpe1_get_max_mem);
-
-void* vpe1_get_cmdline_argument(void)
-{
-       return saved_command_line;
-}
-
-EXPORT_SYMBOL(vpe1_get_cmdline_argument);
-
-int32_t vpe1_set_boot_param(char *field, char *value, char flags)
-{
-       char *ptr, string[64];
-       int start_off, end_off;
-       if (!field)
-               return -1;
-       strcpy(string, field);
-       if (value) {
-               strcat(string, "=");
-               strcat(string, value);
-               strcat(command_line, " ");
-               strcat(command_line, string);
-       }
-       else {
-               ptr = strstr(command_line, string);
-               if (ptr) {
-                       start_off = ptr - command_line;
-                       ptr += strlen(string);
-                       while ((*ptr != ' ') && (*ptr != '\0'))
-                               ptr++;
-                       end_off = ptr - command_line;
-                       command_line[start_off] = '\0';
-                       strcat (command_line, command_line+end_off);
-               }
-       }
-       return 0;
-}
-
-EXPORT_SYMBOL(vpe1_set_boot_param);
-
-int32_t vpe1_get_boot_param(char *field, char **value, char flags)
-{
-       char *ptr, string[64];
-       int i = 0;
-       if (!field)
-               return -1;
-       if ((ptr = strstr(command_line, field))) {
-               ptr += strlen(field) + 1; /* including = */
-               while ((*ptr != ' ') && (*ptr != '\0'))
-                       string[i++] = *ptr++;
-               string[i] = '\0';
-               *value = kmalloc((strlen(string) + 1), GFP_KERNEL);
-               if (*value != NULL)
-                       strcpy(*value, string);
-       }
-       else
-               *value = NULL;
-
-       return 0;
-}
-
-EXPORT_SYMBOL(vpe1_get_boot_param);
-
-extern void configure_tlb(void);
-#endif
-
-/*
- * RP applications may contain a _vpe_shared_area descriptor
- * array to allow for data sharing with Linux kernel functions
- * that's slightly more abstracted and extensible than the
- * fixed binding used by the rtlx support.  Indeed, the rtlx
- * support should ideally be converted to use the generic
- * shared area descriptor scheme at some point.
- *
- * mips_get_vpe_shared_area() can be used by AP kernel
- * modules to get an area pointer of a given type, if
- * it exists.
- *
- * mips_publish_vpe_area() is used by AP kernel modules
- * to share kseg0 kernel memory with the RP.  It maintains
- * a private table, so that publishing can be done before
- * the RP program is launched.  Making this table dynamically
- * allocated and extensible would be good scalable OS design.
- * however, until there's more than one user of the mechanism,
- * it should be an acceptable simplification to allow a static
- * maximum of 4 published areas.
- */
-
-void *mips_get_vpe_shared_area(int index, int type)
-{
-	struct vpe *v;
-	struct vpe_shared_area *vsa;
-
-	v = get_vpe(index);
-	if (v == NULL)
-		return NULL;
-
-	if (v->shared_areas == NULL)
-		return NULL;
-
-	vsa = v->shared_areas;
-
-	while (vsa->type != VPE_SHARED_NULL) {
-		if (vsa->type == type)
-			return vsa->addr;
-		else
-			vsa++;
-	}
-	/* Fell through without finding type */
-
-	return NULL;
-}
-EXPORT_SYMBOL(mips_get_vpe_shared_area);
-
-int  mips_publish_vpe_area(int type, void *ptr)
-{
-	int i;
-	int retval = 0;
-	struct vpe *v;
-	unsigned long flags;
-	unsigned int vpflags;
-
-	printk(KERN_INFO "mips_publish_vpe_area(0x%x, 0x%x)\n", type, (int)ptr);
-	if ((unsigned int)ptr >= KSEG2) {
-	    printk(KERN_ERR "VPE area pubish of invalid address 0x%x\n",
-		(int)ptr);
-	    return 0;
-	}
-	for (i = 0; i < N_PUB_AREAS; i++) {
-	    if (published_vpe_area[i].type == VPE_SHARED_RESERVED) {
-		published_vpe_area[i].type = type;
-		published_vpe_area[i].addr = ptr;
-		retval = type;
-		break;
-	    }
-	}
-	/*
-	 * If we've already got a VPE up and running, try to
-	 * update the shared descriptor with the new data.
-	 */
-	list_for_each_entry(v, &vpecontrol.vpe_list, list) {
-	    if (v->shared_areas != NULL) {
-		local_irq_save(flags);
-		vpflags = dvpe();
-		for (i = 0; v->shared_areas[i].type != VPE_SHARED_NULL; i++) {
-		    if ((v->shared_areas[i].type == type)
-		    || (v->shared_areas[i].type == VPE_SHARED_RESERVED)) {
-			v->shared_areas[i].type = type;
-			v->shared_areas[i].addr = ptr;
-		    }
-		}
-		evpe(vpflags);
-		local_irq_restore(flags);
-	    }
-	}
-	return retval;
-}
-EXPORT_SYMBOL(mips_publish_vpe_area);
-
-#ifdef CONFIG_MIPS_APSP_KSPD
-static void kspd_sp_exit( int sp_id)
-{
-	cleanup_tc(get_tc(sp_id));
-}
-#endif
-
 static ssize_t store_kill(struct device *dev, struct device_attribute *attr,
 			  const char *buf, size_t len)
 {
@@ -2363,7 +1329,6 @@ static ssize_t store_kill(struct device *dev, struct device_attribute *attr,
 	}
 
 	release_progmem(vpe->load_addr);
-	kfree(vpe->l_phsort);
 	cleanup_tc(get_tc(tclimit));
 	vpe_stop(vpe);
 	vpe_free(vpe);
@@ -2409,8 +1374,6 @@ static struct device_attribute vpe_class_attributes[] = {
 
 static void vpe_device_release(struct device *cd)
 {
-	printk(KERN_DEBUG "Using kfree to free vpe class device at %x\n",
-	       (unsigned int)cd);
 	kfree(cd);
 }
 
@@ -2429,66 +1392,27 @@ static int __init vpe_module_init(void)
 	unsigned long flags, val;
 	struct vpe *v = NULL;
 	struct tc *t;
-	int tc, err = 0;
+	int tc, err;
 
 	if (!cpu_has_mipsmt) {
 		printk("VPE loader: not a MIPS MT capable processor\n");
 		return -ENODEV;
 	}
 
-#ifdef CONFIG_LTQ_VPE_EXT
-       strcpy(command_line, saved_command_line);
-       vpe1mem();
-#ifndef CONFIG_MIPS_MT_SMTC
-        configure_tlb();
-#endif
-#endif
-
-#ifndef CONFIG_MIPS_MT_SMTC
-       if (!vpelimit)
-               vpelimit = 1;
-       if (!tclimit)
-               tclimit = 1;
-#endif
-
-#ifdef CONFIG_LTQ_VPE_EXT
-       val = read_c0_mvpconf0();
-
-        hw_tcs = (val & MVPCONF0_PTC) + 1;
-        hw_vpes = ((val & MVPCONF0_PVPE) >> MVPCONF0_PVPE_SHIFT) + 1;
-
-#endif
-
-	if (vpelimit == 0
-#ifdef CONFIG_LTQ_VPE_EXT
-	|| (vpelimit >= hw_vpes)
-#endif
-) {
-#if defined(CONFIG_MIPS_MT_SMTC) || defined(MIPS_MT_SMP)
+	if (vpelimit == 0) {
 		printk(KERN_WARNING "No VPEs reserved for AP/SP, not "
 		       "initializing VPE loader.\nPass maxvpes=<n> argument as "
 		       "kernel argument\n");
 
 		return -ENODEV;
-#else
-		vpelimit = 1;
-#endif
 	}
 
-	if (tclimit == 0
-#ifdef CONFIG_LTQ_VPE_EXT
-|| (tclimit >= hw_tcs)
-#endif
-) {
-#if defined(CONFIG_MIPS_MT_SMTC) || defined(MIPS_MT_SMP)
+	if (tclimit == 0) {
 		printk(KERN_WARNING "No TCs reserved for AP/SP, not "
 		       "initializing VPE loader.\nPass maxtcs=<n> argument as "
 		       "kernel argument\n");
 
 		return -ENODEV;
-#else
-		tclimit = 1;
-#endif
 	}
 
 	major = register_chrdev(0, module_name, &vpe_fops);
@@ -2502,7 +1426,7 @@ static int __init vpe_module_init(void)
 		printk(KERN_ERR "vpe_class registration failed\n");
 		goto out_chrdev;
 	}
-	xvpe_vector_set = 0;
+
 	device_initialize(&vpe_device);
 	vpe_device.class	= &vpe_class,
 	vpe_device.parent	= NULL,
@@ -2517,10 +1441,7 @@ static int __init vpe_module_init(void)
 	local_irq_save(flags);
 	mtflags = dmt();
 	vpflags = dvpe();
-#ifdef CONFIG_LTQ_VPE_EXT
-	back_to_back_c0_hazard();
-	val = hw_tcs = hw_vpes = 0;
-#endif
+
 	/* Put MVPE's into 'configuration state' */
 	set_c0_mvpcontrol(MVPCONTROL_VPC);
 
@@ -2561,8 +1482,6 @@ static int __init vpe_module_init(void)
 			}
 
 			v->ntcs = hw_tcs - tclimit;
-
-                       write_tc_c0_tcbind((read_tc_c0_tcbind() & ~TCBIND_CURVPE) | 1);
 
 			/* add the tc to the list of this vpe's tc's. */
 			list_add(&t->tc, &v->tc);
@@ -2631,9 +1550,7 @@ static int __init vpe_module_init(void)
 out_reenable:
 	/* release config state */
 	clear_c0_mvpcontrol(MVPCONTROL_VPC);
-#ifdef CONFIG_LTQ_VPE_EXT 
-	back_to_back_c0_hazard();
-#endif
+
 	evpe(vpflags);
 	emt(mtflags);
 	local_irq_restore(flags);

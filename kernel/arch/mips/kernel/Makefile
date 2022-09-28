@@ -74,8 +74,6 @@ obj-$(CONFIG_MIPS32_O32)	+= binfmt_elfo32.o scall64-o32.o
 
 obj-$(CONFIG_KGDB)		+= kgdb.o
 obj-$(CONFIG_PROC_FS)		+= proc.o
-obj-$(CONFIG_MTSCHED)           += mtsched_proc.o
-obj-$(CONFIG_PERFCTRS)          += perf_proc.o
 
 obj-$(CONFIG_64BIT)		+= cpu-bugs64.o
 
@@ -99,7 +97,12 @@ obj-$(CONFIG_HW_PERF_EVENTS)	+= perf_event_mipsxx.o
 obj-$(CONFIG_JUMP_LABEL)	+= jump_label.o
 
 #
-# DSP ASE supported for MIPS32 or MIPS64 Release 2 cores only.
+# DSP ASE supported for MIPS32 or MIPS64 Release 2 cores only. It is not
+# safe to unconditionnaly use the assembler -mdsp / -mdspr2 switches
+# here because the compiler may use DSP ASE instructions (such as lwx) in
+# code paths where we cannot check that the CPU we are running on supports it.
+# Proper abstraction using HAVE_AS_DSP and macros is done in
+# arch/mips/include/asm/mipsregs.h.
 #
 ifeq ($(CONFIG_CPU_MIPSR2), y)
 CFLAGS_DSP 			= -DHAVE_AS_DSP
